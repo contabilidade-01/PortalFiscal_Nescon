@@ -380,6 +380,45 @@ def registrar_consulta(cnpj, servico='distNSU'):
         c.execute('INSERT INTO consultas_log(cnpj,servico,quando) VALUES(?,?,?)',
                   (cnpj, servico, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
 
+def diagnostico_persistencia():
+    """No Docker, dados em /app/data so sobrevivem ao deploy se houver VOLUME montado.
+    Sem mount, cada 'Implantar' no EasyPanel zera banco, XML e certificados."""
+    data = os.path.abspath(DATA_DIR)
+    in_container = os.path.exists('/.dockerenv') or os.environ.get('FISCAL_DATA_DIR') == '/app/data'
+    mounted = False
+    try:
+        if os.path.ismount(data):
+            mounted = True
+        else:
+            parent = os.path.dirname(data.rstrip(os.sep)) or os.sep
+            mounted = os.stat(data).st_dev != os.stat(parent).st_dev
+        if not mounted and os.path.isfile('/proc/self/mountinfo'):
+            with open('/proc/self/mountinfo', encoding='utf-8', errors='ignore') as f:
+                txt = f.read()
+            mounted = (' %s ' % data) in txt or txt.find(' ' + data + '\n') >= 0 or txt.rstrip().endswith(' ' + data)
+    except OSError:
+        mounted = False
+    n_emp = n_jobs = 0
+    db_bytes = 0
+    try:
+        if os.path.isfile(DB):
+            db_bytes = os.path.getsize(DB)
+        with con() as c:
+            n_emp = c.execute('SELECT COUNT(*) FROM empresas').fetchone()[0]
+            n_jobs = c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
+    except Exception:
+        pass
+    return {
+        'data_dir': data,
+        'db': DB,
+        'in_container': bool(in_container),
+        'volume_montado': bool(mounted),
+        'risco_apagar_no_deploy': bool(in_container and not mounted),
+        'empresas': n_emp,
+        'jobs': n_jobs,
+        'db_bytes': db_bytes,
+    }
+
 if __name__ == '__main__':
     init_db()
     print('Base pronta em', DB)

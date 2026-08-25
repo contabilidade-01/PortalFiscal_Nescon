@@ -122,6 +122,13 @@ def test_ocorrencia_gravada():
     assert n >= 1
 
 
+def test_diagnostico_persistencia_local():
+    _db()
+    d = models.diagnostico_persistencia()
+    assert d['empresas'] >= 1
+    assert d['risco_apagar_no_deploy'] is False
+
+
 def test_f_uazapi_sem_credencial_nao_configura():
     from engines import uazapi
     for k in ('UAZAPI_SUBDOMAIN', 'UAZAPI_TOKEN'):
@@ -158,4 +165,5 @@ if __name__ == '__main__':
     test_g5_109_retomavel_e_cooldown()
     test_g4_rate_gate_avanca_relogio()
     test_ocorrencia_gravada()
+    test_diagnostico_persistencia_local()
     print('ok antiban')

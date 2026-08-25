@@ -45,11 +45,17 @@ worker.iniciar_worker()  # motor de jobs em background (roda mesmo sem usuario l
 
 @app.route('/healthz')
 def healthz():
-    """Healthcheck do EasyPanel/Docker — sem login."""
+    """Healthcheck do EasyPanel/Docker — sem login. Inclui diagnostico de volume."""
     try:
-        with models.con() as c:
-            c.execute('SELECT 1').fetchone()
-        return {'ok': True}, 200
+        d = models.diagnostico_persistencia()
+        return {
+            'ok': True,
+            'volume_montado': d['volume_montado'],
+            'risco_apagar_no_deploy': d['risco_apagar_no_deploy'],
+            'empresas': d['empresas'],
+            'jobs': d['jobs'],
+            'data_dir': d['data_dir'],
+        }, 200
     except Exception:
         return {'ok': False}, 503
 
@@ -99,6 +105,8 @@ def _inject_papel():
         'papel_atual': session.get('papel'),
         'perms': perms,
         'tem_perm': lambda k: k in perms,
+        'risco_volume': (models.diagnostico_persistencia().get('risco_apagar_no_deploy')
+                         if session.get('papel') == 'admin' else False),
     }
 
 # Rate limit simples (memoria) p/ forgot-password — alinhado ao nescon-clientes

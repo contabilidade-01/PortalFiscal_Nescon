@@ -241,6 +241,13 @@ svg{display:block}
   ⚠️ Você ainda usa a senha padrão <b>admin / admin</b>. <a href="{{ url_for('trocar_senha') }}" style="color:var(--err);font-weight:700;text-decoration:underline">Trocar agora →</a>
 </div>
 {% endif %}
+{% if session.uid and risco_volume %}
+<div style="background:var(--errbg);color:var(--err);padding:12px 26px;font-size:13.5px;display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">
+  ⚠️ <b>Volume persistente NÃO está montado.</b> Cada “Implantar” no EasyPanel apaga empresas, execuções, XML e certificados.
+  No painel: <b>Mounts / Volumes</b> → adicionar volume <code>portal-fiscal-data</code> no destino <code>/app/data</code> → implantar de novo.
+  Depois restaure o backup em <a href="{{ url_for('backup') }}" style="color:var(--err);font-weight:700;text-decoration:underline">Admin → Backup</a>.
+</div>
+{% endif %}
 
 {% block full %}
 <div class="wrap">{% block corpo %}{% endblock %}</div>

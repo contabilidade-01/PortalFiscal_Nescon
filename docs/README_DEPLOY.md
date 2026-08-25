@@ -54,6 +54,9 @@ Rode duas vezes: uma para `SECRET_KEY`, outra (opcional) para senha admin.
 2. **Build:** Dockerfile (raiz). Porta do container: **8000**.
 3. **Environment:** as variáveis da tabela acima (`SECRET_KEY`, `ADMIN_SENHA_INICIAL`, `FLASK_HTTPS=1`, `TRUST_PROXY=1`). O resto já vem na imagem.
 4. **Mounts → Add Volume:** nome `portal-fiscal-data` → destino **`/app/data`**. Sem isso, cada redeploy apaga banco, XML e certificados.
+
+> **Sintoma clássico:** o site abre, Waitress diz `Serving on 0.0.0.0:8000`, mas depois de cada push as empresas, execuções e XML somem. O front não “resetou”: o container nasceu sem disco persistente e o `init_db()` criou um banco vazio (só `admin`). Confira `GET /healthz` → `volume_montado` deve ser `true` e `risco_apagar_no_deploy` `false`.
+
 5. **Domains:** ex. `fiscal.gestaoempresa.com` → serviço `web` / porta 8000 → HTTPS Let's Encrypt.
 6. **Auto Deploy:** ligado, para rebuild a cada push em `main`.
 
