@@ -40,3 +40,6 @@ venv/
 
 # Clone aninhado do Cursor (nao versionar)
 portalfiscal_nescon/
+
+# Backups locais (cadastros + CERTIFICADOS/chave privada - LGPD)
+backups/

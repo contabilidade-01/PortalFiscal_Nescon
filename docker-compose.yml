@@ -16,6 +16,7 @@ services:
       FISCAL_XML_DIR: /app/data/XML
       FISCAL_CRON: "1"
       FISCAL_CRON_HORA: "06:00"
+      FISCAL_ROLE: "web"
       TRUST_PROXY: "1"
       FLASK_HTTPS: "1"
     volumes:

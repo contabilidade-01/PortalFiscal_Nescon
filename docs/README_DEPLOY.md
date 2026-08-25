@@ -91,7 +91,11 @@ Não precisa de Tarefa Agendada do Windows no VPS. Reserva: Cron do EasyPanel co
 python /app/run_diario.py
 ```
 
-(só use um dos dois para não duplicar a varredura / anti-656.)
+Com `FISCAL_CRON=1` o `run_diario` assume `FISCAL_ROLE=web`: **só enfileira** e deixa o worker do app processar. Assim não há dois processos NFC-e no mesmo IP (limite SEFAZ-SP). No Windows, com o app desligado, `FISCAL_ROLE=cron` (ou omitir `FISCAL_CRON`) processa a fila.
+
+Painel **Admin → Saúde SEFAZ** (`/sefaz/saude`): quem está em cooldown/circuito, histórico de 656/429 e botão de rearme.
+
+(só use um dos dois — cron EasyPanel *e* `FISCAL_CRON=1` — para não duplicar a varredura.)
 
 ## 6. Backup (LGPD)
 

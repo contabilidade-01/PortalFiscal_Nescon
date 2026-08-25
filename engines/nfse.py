@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 import requests
 import models
 from engines import certs
+from engines import guard
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
@@ -64,8 +65,9 @@ def _salvar(cnpj, xml, nsu):
 def puxar_nfse(emp):
     """emp: row de empresas. Varre NFSe da empresa no ADN (NSU incremental)."""
     cnpj = emp['cnpj']
-    if emp['bloqueado_nfse_ate'] and datetime.now().strftime('%Y-%m-%d %H:%M:%S') < emp['bloqueado_nfse_ate']:
-        return 0, 'cooldown'
+    d0 = guard.pode(cnpj, 'nfse')
+    if not d0.liberado:
+        return 0, d0.parada or 'cooldown'
     if not emp['arquivo']:
         return 0, 'sem_certificado'
     try:
@@ -85,8 +87,11 @@ def puxar_nfse(emp):
             if r.status_code == 404: parada = 'fim'; break
             if r.status_code == 429:
                 ra = r.headers.get('Retry-After')
-                time.sleep(int(ra) if ra and ra.isdigit() else NFSE['espera_seg'] * rounds)
-                if rounds >= NFSE['max_rounds_por_empresa']: parada = '429'; break
+                extra = int(ra) if ra and ra.isdigit() else NFSE['espera_seg'] * rounds
+                if rounds >= NFSE['max_rounds_por_empresa']:
+                    parada = '429'
+                    break
+                time.sleep(extra)
                 continue
             if r.status_code != 200: parada = 'http_%d' % r.status_code; break
             try: payload = r.json()
@@ -98,15 +103,18 @@ def puxar_nfse(emp):
                 if nsu > ult: ult = nsu
             with models.con() as c:
                 c.execute('UPDATE empresas SET ultnsu_nfse=? WHERE id=?', (str(ult), emp['id']))
-            time.sleep(NFSE['espera_seg'])
+            guard.sleep_jitter(NFSE['espera_seg'])
     finally:
         for f in (leaf, keyf):
             try: os.remove(f)
             except Exception: pass
-    bloq = (datetime.now() + timedelta(minutes=30)).strftime('%Y-%m-%d %H:%M:%S') if parada in ('429',) else None
     with models.con() as c:
-        c.execute('UPDATE empresas SET ultnsu_nfse=?, ultima_exec_nfse=?, total_nfse=total_nfse+?, bloqueado_nfse_ate=? WHERE id=?',
-                  (str(ult), datetime.now().strftime('%Y-%m-%d %H:%M'), total, bloq, emp['id']))
+        c.execute('UPDATE empresas SET ultnsu_nfse=?, ultima_exec_nfse=?, total_nfse=total_nfse+? WHERE id=?',
+                  (str(ult), datetime.now().strftime('%Y-%m-%d %H:%M'), total, emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfse', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada, 'ultNSU=%s' % ult))
+    if parada == '429':
+        guard.registrar_bloqueio(cnpj, 'nfse', '429', nome=emp['nome'])
+    elif parada in ('fim', 'cap') or total:
+        guard.registrar_ok(cnpj, 'nfse')
     return total, parada

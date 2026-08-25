@@ -58,6 +58,9 @@
           Forçar NSU inicial (NF-e)
         </h3>
         <p class="desc" style="margin:0 0 12px">Use quando o NSU do banco não é confiável (ex: escrituração atrasada, base recriada). A próxima execução de <b>Entradas NF-e</b> começará por este NSU e zera a flag.</p>
+        <div class="status-strip" style="background:var(--errbg);color:var(--err);margin-bottom:12px">
+          Reconsultar faixas já lidas em excesso pode caracterizar <b>consumo indevido (656)</b>. Use uma vez só, no menor NSU necessário.
+        </div>
         <form method="post" action="{{ url_for('cliente_forcar_nsu', eid=e['id']) }}" class="row" style="gap:10px;align-items:flex-end">
           <div>
             <label>NSU inicial (15 dígitos)</label>

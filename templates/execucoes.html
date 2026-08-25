@@ -58,6 +58,8 @@
   '656':      ('Bloqueio temporário', 'wr',   'cStat 656 — consumo indevido. Espera ~1 hora e o servidor retoma sozinho.'),
   '429':      ('Limite de acessos',   'wr',   'HTTP 429 — espera automática; o servidor retoma depois da pausa.'),
   '108':      ('SEFAZ instável',      'wr',   'Serviço paralisado momentaneamente. Retoma após o cooldown.'),
+  '109':      ('SEFAZ paralisado',   'wr',   'cStat 109 — serviço paralisado sem previsão. Espera o cooldown e retoma.'),
+  'circuito_aberto': ('Circuito aberto', 'er', 'Vários 656 seguidos. O robô parou este CNPJ até um admin rearmar em Saúde SEFAZ.'),
   'cooldown': ('Em espera',           'wr',   'Ainda dentro da pausa obrigatória. O servidor agenda a continuação e não consulta agora.'),
   'resposta_invalida': ('Resposta inválida','er','O servidor respondeu algo que não é JSON válido.')
 } %}
@@ -116,13 +118,18 @@
         ('ciencia',      'Ciência 210210',      'Manifesta as entradas pendentes para liberar o XML completo.')
       ] %}
       {% for valor, nome, desc in opcoes %}
-      <label class="tile{{ ' sel' if loop.first }}">
-        <input type="radio" name="tipo" value="{{ valor }}" {{ 'checked' if loop.first }}>
+      {% if valor in tipos_ok %}
+      <label class="tile">
+        <input type="radio" name="tipo" value="{{ valor }}">
         <b>{{ nome }}</b><small>{{ desc }}</small>
       </label>
+      {% endif %}
       {% endfor %}
     </div>
 
+    {% if not tipos_ok %}
+    <div class="status-strip" style="background:var(--surface2)">Você não tem permissão para iniciar buscas. Peça ao administrador.</div>
+    {% else %}
     <div class="status-strip">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
       <span><b>O que será baixado:</b> <span id="periodoTxt"></span></span>
@@ -135,6 +142,7 @@
       </button>
       <span class="muted" style="align-self:center">Entra na fila e começa em alguns segundos.</span>
     </div>
+    {% endif %}
   </form>
 </div>
 
@@ -149,14 +157,18 @@ var PERIODOS = {
 };
 (function(){
   var tiles = document.querySelectorAll('#formBusca .tile');
+  if (!tiles.length) return;
+  tiles[0].querySelector('input').checked = true;
+  tiles[0].classList.add('sel');
   function pinta(){
-    var v = 'completo';
+    var v = tiles[0].querySelector('input').value;
     tiles.forEach(function(t){
       var r = t.querySelector('input');
       t.classList.toggle('sel', r.checked);
       if (r.checked) v = r.value;
     });
-    document.getElementById('periodoTxt').textContent = PERIODOS[v] || '';
+    var el = document.getElementById('periodoTxt');
+    if (el) el.textContent = PERIODOS[v] || '';
   }
   tiles.forEach(function(t){ t.querySelector('input').addEventListener('change', pinta); });
   pinta();

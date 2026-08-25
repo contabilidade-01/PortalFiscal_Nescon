@@ -1,5 +1,5 @@
 {
-  "pasta_saida_xml": "C:/Users/parce/OneDrive/Desktop/OneDrive - Nescon/OneDrive/00_Nescon Contabilidade/0011_TEMPORARIOS/TESTENFE/PortalFiscal_Nescon/XML",
+  "pasta_saida_xml": "C:/Users/Jeandson/OneDrive/00_Nescon Contabilidade/0011_TEMPORARIOS/TESTENFE/PortalFiscal_Nescon/XML",
   "porta": 5001,
   "pasta_local_extra": "",
   "nfe": {
@@ -7,7 +7,8 @@
     "espera_seg": 2,
     "espera_entre_empresas_seg": 2,
     "cooldown_min": 65,
-    "retomar_cap_seg": 15
+    "retomar_cap_seg": 15,
+    "retomar_limite_seg": 60
   },
   "nfce": {
     "espera_seg": 1.5,
@@ -27,5 +28,10 @@
     "max_rounds_por_empresa": 50,
     "espera_seg": 2,
     "timeout_seg": 60
+  },
+  "antiban": {
+    "circuito_limiar": 5,
+    "distnsu_limite_qtd": 300,
+    "distnsu_limite_min": 5
   }
 }
