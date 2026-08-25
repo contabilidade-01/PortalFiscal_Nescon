@@ -5,7 +5,7 @@
 """
 import os, io, re, json, zipfile, threading
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, session, flash,
                    render_template, send_file, abort)
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -175,15 +175,92 @@ def _contagem_movimentos(cnpjs):
                                 1 for f in os.listdir(d) if f.lower().endswith('.xml'))
     return tot
 
+def _mes_anterior(ref=None):
+    """Competencia padrao do painel: mes anterior ao atual (AAAA, MM)."""
+    hoje = ref or datetime.now()
+    ant = (hoje.replace(day=1) - timedelta(days=1))
+    return ant.strftime('%Y'), ant.strftime('%m')
+
+def _contar_xml(cnpj, comp, doc, *subs):
+    n = 0
+    for sub in subs:
+        d = os.path.join(SAIDA, cnpj, comp, doc, sub)
+        if os.path.isdir(d):
+            n += sum(1 for f in os.listdir(d) if f.lower().endswith('.xml'))
+    return n
+
+def _cobertura_competencia(empresas, comp, incluir_inativos=False, q='', visao='todos'):
+    """Por empresa ativa (e flag do cadastro): qtd de XML no mes, ou None = nao se aplica."""
+    qn = (q or '').strip().lower()
+    todas = []
+    for e in empresas:
+        if not e['ativo'] and not incluir_inativos:
+            continue
+        nome = (e['nome'] or '').strip()
+        if qn and qn not in nome.lower() and qn not in (e['cnpj'] or ''):
+            continue
+        cnpj = e['cnpj']
+        nfe = _contar_xml(cnpj, comp, 'NFe', '01_entrada') if e['puxa_nfe'] else None
+        nfse = (_contar_xml(cnpj, comp, 'NFSe', '01_tomado', '02_prestado')
+                if e['puxa_nfse'] else None)
+        nfce = (_contar_xml(cnpj, comp, 'NFCe', '01_venda')
+                if (e['puxa_nfce'] or 0) else None)
+        if nfe is None and nfse is None and nfce is None:
+            continue
+        falta = ((nfe == 0) or (nfse == 0) or (nfce == 0))
+        todas.append({
+            'id': e['id'], 'cnpj': cnpj, 'nome': nome, 'ativo': e['ativo'],
+            'nfe': nfe, 'nfse': nfse, 'nfce': nfce, 'falta': falta,
+        })
+    def _resumo(chave):
+        esp = [l for l in todas if l[chave] is not None]
+        com = [l for l in esp if l[chave] > 0]
+        return {'esperadas': len(esp), 'com': len(com), 'sem': len(esp) - len(com),
+                'xmls': sum(l[chave] for l in esp)}
+    resumo = {
+        'nfe': _resumo('nfe'), 'nfse': _resumo('nfse'), 'nfce': _resumo('nfce'),
+        'empresas': len(todas),
+        'faltando': sum(1 for l in todas if l['falta']),
+    }
+    if visao == 'faltando':
+        linhas = [l for l in todas if l['falta']]
+    elif visao == 'ok':
+        linhas = [l for l in todas if not l['falta']]
+    elif visao == 'nfe_sem':
+        linhas = [l for l in todas if l['nfe'] == 0]
+    elif visao == 'nfse_sem':
+        linhas = [l for l in todas if l['nfse'] == 0]
+    elif visao == 'nfce_sem':
+        linhas = [l for l in todas if l['nfce'] == 0]
+    else:
+        linhas = todas
+    return linhas, resumo
+
 @app.route('/')
 @login_req
 def dashboard():
+    pad_ano, pad_mes = _mes_anterior()
+    ano = (request.args.get('ano') or pad_ano).strip()
+    mes = (request.args.get('mes') or pad_mes).strip().zfill(2)
+    if not re.match(r'^\d{4}$', ano):
+        ano = pad_ano
+    if mes not in [('%02d' % i) for i in range(1, 13)]:
+        mes = pad_mes
+    comp = '%s-%s' % (ano, mes)
+    visao = request.args.get('visao') or 'todos'
+    if visao not in ('todos', 'faltando', 'ok', 'nfe_sem', 'nfse_sem', 'nfce_sem'):
+        visao = 'todos'
+    q = (request.args.get('q') or '').strip()
+    incluir_inativos = request.args.get('incluir_inativos') in ('1', 'on', 'true')
     with models.con() as c:
-        emp = _scope(c.execute('SELECT * FROM empresas').fetchall())
+        emp = _scope(c.execute('SELECT * FROM empresas ORDER BY nome').fetchall())
         exec_nfe = c.execute("SELECT * FROM execucoes WHERE tipo LIKE 'nfe\\_%' ESCAPE '\\' ORDER BY id DESC LIMIT 12").fetchall()
         exec_nfse = c.execute("SELECT * FROM execucoes WHERE tipo='nfse' ORDER BY id DESC LIMIT 12").fetchall()
         exec_nfce = c.execute("SELECT * FROM execucoes WHERE tipo='nfce' ORDER BY id DESC LIMIT 12").fetchall()
     mov = _contagem_movimentos([e['cnpj'] for e in emp])
+    cob_linhas, cob_resumo = _cobertura_competencia(emp, comp, incluir_inativos, q, visao)
+    anos = sorted(set([str(datetime.now().year), pad_ano, ano] +
+                      [str(y) for y in range(datetime.now().year - 3, datetime.now().year + 1)]))
     # contadores das abas = XMLs REAIS em disco (batem com a quebra por movimento abaixo)
     kpi = dict(
         total=len(emp), ativas=sum(1 for e in emp if e['ativo']),
@@ -200,9 +277,17 @@ def dashboard():
     if rodando:
         msg = '%s (%s/%s)' % (rodando['atual'] or rodando['mensagem'] or 'processando',
                               rodando['feitos'] or 0, rodando['total'] or 0)
+    meses_lab = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                 'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro']
     return render_template('dashboard.html', kpi=kpi, office=office, mov=mov,
                            exec_nfe=exec_nfe, exec_nfse=exec_nfse, exec_nfce=exec_nfce,
-                           status_nfe=msg, status_nfse=msg, status_nfce=msg)
+                           status_nfe=msg, status_nfse=msg, status_nfce=msg,
+                           cob_linhas=cob_linhas, cob_resumo=cob_resumo,
+                           cob_ano=ano, cob_mes=mes, cob_comp=comp,
+                           cob_visao=visao, cob_q=q, cob_inativos=incluir_inativos,
+                           cob_anos=anos, cob_padrao=(ano == pad_ano and mes == pad_mes),
+                           cob_label='%s/%s' % (mes, ano),
+                           cob_mes_nome=meses_lab[int(mes) - 1])
 
 @app.route('/clientes')
 @login_req

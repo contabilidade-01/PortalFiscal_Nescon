@@ -23,6 +23,26 @@
 .guide .arrow{color:var(--muted)}
 .guide .help{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--brand1);text-decoration:none;white-space:nowrap}
 .hint-inline{font-size:12px;color:var(--sub);margin:6px 0 0}
+.cobfiltros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin:0 0 14px}
+.cobfiltros .fld{display:flex;flex-direction:column;gap:4px}
+.cobfiltros label{margin:0;font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);font-weight:700}
+.cobfiltros input,.cobfiltros select{width:auto;padding:8px 11px;font-size:13px}
+.chk{display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--sub);cursor:pointer}
+.chk input{width:auto;margin:0}
+.cobsum{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px}
+.cobsum a{text-decoration:none;color:inherit;border:1px solid var(--line);border-radius:12px;padding:11px 14px;background:var(--surface2);display:block;transition:.12s}
+.cobsum a:hover{border-color:color-mix(in srgb,var(--brand1) 40%,var(--line))}
+.cobsum .k{font-size:11px;font-weight:700;color:var(--sub);text-transform:uppercase;letter-spacing:.3px}
+.cobsum b{display:block;font-size:22px;letter-spacing:-.5px;margin:2px 0 0}
+.cobsum small{color:var(--muted);font-size:12px}
+.cobsum .warn b{color:var(--err)} .cobsum .ok b{color:var(--ok)}
+.cobtbl{min-width:720px;font-size:13px}
+.cobtbl th{font-size:11px;text-transform:uppercase;letter-spacing:.03em;text-align:left}
+.cobtbl td,.cobtbl th{padding:8px 10px;border-bottom:1px solid var(--line)}
+.cobtbl td.num{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.pill-na{color:var(--muted);font-weight:500}
+.pill-ok{color:var(--ok)}
+.pill-no{color:var(--err);background:var(--errbg);padding:2px 8px;border-radius:20px;font-size:11px;font-weight:800}
 @media(max-width:760px){.guide .arrow{display:none}}
 </style>
 
@@ -41,6 +61,82 @@
   <div class="kpi" style="--kbg:#f3e8ff;--kfg:#8b5cf6"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 13H8m8 4H8m2-8H8"/><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><div class="val">{{ kpi.nfse }}</div><div class="lab">Puxam NFS-e</div></div>
   <div class="kpi" style="--kbg:#dcfce7;--kfg:#15803d"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg></div><div class="val">{{ kpi.nfce }}</div><div class="lab">Puxam NFC-e (SP)</div></div>
   <div class="kpi" style="--kbg:#e7f8f0;--kfg:#10b981"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></div><div class="val">{{ kpi.com_cert }}</div><div class="lab">Com certificado</div></div>
+</div>
+
+<div class="card" id="cobertura">
+  <div class="between" style="margin-bottom:4px">
+    <div>
+      <h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Cobertura de XML · {{ cob_mes_nome }} {{ cob_ano }}</h2>
+      <p class="desc" style="margin:4px 0 0">Quem <b>tem</b> e quem <b>não tem</b> XML no mês, só nas naturezas marcadas no cadastro (Puxa NF-e / NFS-e / NFC-e). Padrão: <b>mês anterior</b>{% if cob_padrao %} (já aplicado){% endif %}.</p>
+    </div>
+  </div>
+  <form method="get" class="cobfiltros" action="{{ url_for('dashboard') }}#cobertura">
+    <div class="fld"><label>Ano</label>
+      <select name="ano">{% for a in cob_anos %}<option value="{{a}}" {% if a==cob_ano %}selected{% endif %}>{{a}}</option>{% endfor %}</select>
+    </div>
+    <div class="fld"><label>Mês</label>
+      <select name="mes">
+        {% for m,n in [('01','Jan'),('02','Fev'),('03','Mar'),('04','Abr'),('05','Mai'),('06','Jun'),('07','Jul'),('08','Ago'),('09','Set'),('10','Out'),('11','Nov'),('12','Dez')] %}
+        <option value="{{m}}" {% if m==cob_mes %}selected{% endif %}>{{m}} · {{n}}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld"><label>Mostrar</label>
+      <select name="visao">
+        <option value="todos" {% if cob_visao=='todos' %}selected{% endif %}>Todas as esperadas</option>
+        <option value="faltando" {% if cob_visao=='faltando' %}selected{% endif %}>Só quem falta XML</option>
+        <option value="ok" {% if cob_visao=='ok' %}selected{% endif %}>Só quem já tem</option>
+        <option value="nfe_sem" {% if cob_visao=='nfe_sem' %}selected{% endif %}>Sem NF-e entrada</option>
+        <option value="nfse_sem" {% if cob_visao=='nfse_sem' %}selected{% endif %}>Sem NFS-e</option>
+        <option value="nfce_sem" {% if cob_visao=='nfce_sem' %}selected{% endif %}>Sem NFC-e</option>
+      </select>
+    </div>
+    <div class="fld"><label>Empresa</label>
+      <input name="q" value="{{ cob_q }}" placeholder="nome ou CNPJ" style="min-width:160px">
+    </div>
+    <label class="chk" style="font-size:12.5px;margin-bottom:8px"><input type="checkbox" name="incluir_inativos" value="1" {% if cob_inativos %}checked{% endif %} style="width:auto"> inativos</label>
+    <button class="btn btn-primary sm">Filtrar</button>
+    <a class="btn btn-ghost sm" href="{{ url_for('dashboard') }}#cobertura">Mês anterior</a>
+  </form>
+  {% set cob_extra = {'incluir_inativos': 1} if cob_inativos else {} %}
+  <div class="cobsum">
+    <a href="{{ url_for('dashboard', ano=cob_ano, mes=cob_mes, visao='todos', q=cob_q, **cob_extra) }}#cobertura">
+      <span class="k">Empresas no filtro</span><b>{{ cob_resumo.empresas }}</b>
+      <small>{{ cob_resumo.faltando }} com algum XML faltando</small>
+    </a>
+    <a class="{{ 'warn' if cob_resumo.nfe.sem else 'ok' }}" href="{{ url_for('dashboard', ano=cob_ano, mes=cob_mes, visao='nfe_sem', q=cob_q, **cob_extra) }}#cobertura">
+      <span class="k">NF-e entrada</span><b>{{ cob_resumo.nfe.com }}/{{ cob_resumo.nfe.esperadas }}</b>
+      <small>{{ cob_resumo.nfe.sem }} sem XML · {{ cob_resumo.nfe.xmls }} notas</small>
+    </a>
+    <a class="{{ 'warn' if cob_resumo.nfse.sem else 'ok' }}" href="{{ url_for('dashboard', ano=cob_ano, mes=cob_mes, visao='nfse_sem', q=cob_q, **cob_extra) }}#cobertura">
+      <span class="k">NFS-e</span><b>{{ cob_resumo.nfse.com }}/{{ cob_resumo.nfse.esperadas }}</b>
+      <small>{{ cob_resumo.nfse.sem }} sem XML · {{ cob_resumo.nfse.xmls }} notas</small>
+    </a>
+    <a class="{{ 'warn' if cob_resumo.nfce.sem else 'ok' }}" href="{{ url_for('dashboard', ano=cob_ano, mes=cob_mes, visao='nfce_sem', q=cob_q, **cob_extra) }}#cobertura">
+      <span class="k">NFC-e</span><b>{{ cob_resumo.nfce.com }}/{{ cob_resumo.nfce.esperadas }}</b>
+      <small>{{ cob_resumo.nfce.sem }} sem XML · {{ cob_resumo.nfce.xmls }} notas</small>
+    </a>
+  </div>
+  <div class="tbl-wrap"><table class="cobtbl">
+    <thead><tr>
+      <th>Empresa</th>
+      <th style="text-align:right">NF-e entrada</th>
+      <th style="text-align:right">NFS-e</th>
+      <th style="text-align:right">NFC-e</th>
+    </tr></thead>
+    <tbody>
+    {% for r in cob_linhas %}
+    <tr>
+      <td><b>{{ r.nome|title }}</b> <span class="muted" style="font-size:11px">{{ r.cnpj }}</span>{% if not r.ativo %} <span class="pill off">inativo</span>{% endif %}</td>
+      <td class="num">{% if r.nfe is none %}<span class="pill-na">—</span>{% elif r.nfe %}<span class="pill-ok">{{ r.nfe }}</span>{% else %}<span class="pill-no">sem XML</span>{% endif %}</td>
+      <td class="num">{% if r.nfse is none %}<span class="pill-na">—</span>{% elif r.nfse %}<span class="pill-ok">{{ r.nfse }}</span>{% else %}<span class="pill-no">sem XML</span>{% endif %}</td>
+      <td class="num">{% if r.nfce is none %}<span class="pill-na">—</span>{% elif r.nfce %}<span class="pill-ok">{{ r.nfce }}</span>{% else %}<span class="pill-no">sem XML</span>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted" style="text-align:center;padding:22px">Nenhuma empresa neste filtro. Troque o mês ou a visão, ou marque as flags no <a href="{{ url_for('clientes') }}">cadastro</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="hint-inline">Traço (—) = natureza não marcada no cadastro (não se espera esse XML). NF-e conta só <b>compras</b> (<code>01_entrada</code>). NFS-e = tomados + prestados. NFC-e = vendas modelo 65.</p>
 </div>
 
 <div class="tabs">
