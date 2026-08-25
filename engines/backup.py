@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Backup e restauracao de cadastros, certificados A1 e XML.
+"""Backup e restauracao de cadastros e certificados A1.
    Zip de migracao Windows -> EasyPanel. Reescreve caminhos dos .pfx para o volume.
+   XML fica de fora (o servidor puxa de novo na SEFAZ).
 """
 import json, os, shutil, sqlite3, zipfile
 from datetime import datetime
@@ -8,24 +9,9 @@ from datetime import datetime
 MANIFEST = 'manifest.json'
 DB_IN_ZIP = 'portal_fiscal.db'
 CERT_IN_ZIP = 'Certificados'
-XML_IN_ZIP = 'XML'
 RESTAURAR_VOLUME = 'restaurar.zip'
 
 # Tabelas que viajam no backup. Nao leva usuarios/jobs (login do servidor fica).
-
-
-def tamanho_pasta(path):
-    tot = n = 0
-    if not os.path.isdir(path):
-        return 0, 0
-    for raiz, _, arqs in os.walk(path):
-        for a in arqs:
-            p = os.path.join(raiz, a)
-            try:
-                tot += os.path.getsize(p); n += 1
-            except OSError:
-                pass
-    return tot, n
 
 
 def fmt_bytes(n):
@@ -86,7 +72,7 @@ def extra_caminhos_cert(db_path):
         c.close()
 
 
-def resumo(db_path, cert_dir, xml_dir):
+def resumo(db_path, cert_dir):
     n_emp = n_ok = 0
     if os.path.isfile(db_path):
         c = sqlite3.connect(db_path)
@@ -97,7 +83,6 @@ def resumo(db_path, cert_dir, xml_dir):
             pass
         finally:
             c.close()
-    xml_b, xml_n = tamanho_pasta(xml_dir)
     certs = _coletar_certs(cert_dir, extra_caminhos_cert(db_path))
     cert_b = 0
     for p in certs.values():
@@ -108,15 +93,12 @@ def resumo(db_path, cert_dir, xml_dir):
     db_b = os.path.getsize(db_path) if os.path.isfile(db_path) else 0
     return {
         'empresas': n_emp, 'com_cert': n_ok, 'pfx': len(certs),
-        'xml_qtd': xml_n, 'xml_bytes': xml_b, 'xml_fmt': fmt_bytes(xml_b),
         'db_fmt': fmt_bytes(db_b), 'cert_fmt': fmt_bytes(cert_b),
         'leve_fmt': fmt_bytes(db_b + cert_b),
-        'tudo_fmt': fmt_bytes(db_b + cert_b + xml_b),
     }
 
 
-def criar_zip(destino, db_path, cert_dir, xml_dir, incluir_db=True, incluir_certs=True,
-              incluir_xml=True):
+def criar_zip(destino, db_path, cert_dir, incluir_db=True, incluir_certs=True):
     os.makedirs(os.path.dirname(os.path.abspath(destino)) or '.', exist_ok=True)
     if incluir_db:
         checkpoint_db(db_path)
@@ -127,7 +109,7 @@ def criar_zip(destino, db_path, cert_dir, xml_dir, incluir_db=True, incluir_cert
         'quando': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'inclui_db': bool(incluir_db),
         'inclui_certs': bool(incluir_certs),
-        'inclui_xml': bool(incluir_xml),
+        'inclui_xml': False,
     }
     with zipfile.ZipFile(destino, 'w', zipfile.ZIP_DEFLATED, allowZip64=True) as zf:
         zf.writestr(MANIFEST, json.dumps(man, ensure_ascii=False, indent=2))
@@ -135,12 +117,6 @@ def criar_zip(destino, db_path, cert_dir, xml_dir, incluir_db=True, incluir_cert
             zf.write(db_path, DB_IN_ZIP)
         for nome, origem in sorted(certs.items()):
             zf.write(origem, '%s/%s' % (CERT_IN_ZIP, nome))
-        if incluir_xml and os.path.isdir(xml_dir):
-            for raiz, _, arqs in os.walk(xml_dir):
-                for a in arqs:
-                    full = os.path.join(raiz, a)
-                    rel = os.path.relpath(full, xml_dir).replace('\\', '/')
-                    zf.write(full, '%s/%s' % (XML_IN_ZIP, rel))
     return destino
 
 
@@ -184,37 +160,24 @@ def _remap_pfx(path, cert_dir):
     return os.path.join(cert_dir, nome)
 
 
-def _copiar_xml(src_dir, dest_dir):
-    n = 0
-    if not os.path.isdir(src_dir):
-        return 0
-    for raiz, _, arqs in os.walk(src_dir):
-        for a in arqs:
-            origem = os.path.join(raiz, a)
-            rel = os.path.relpath(origem, src_dir)
-            dest = os.path.join(dest_dir, rel)
-            os.makedirs(os.path.dirname(dest), exist_ok=True)
-            if os.path.isfile(dest) and os.path.getsize(dest) == os.path.getsize(origem):
-                continue
-            shutil.copy2(origem, dest)
-            n += 1
-    return n
-
-
-def restaurar_zip(zip_path, db_path, cert_dir, xml_dir):
-    """Restaura um zip de migracao. Login (usuarios) do destino e preservado."""
+def restaurar_zip(zip_path, db_path, cert_dir):
+    """Restaura um zip de migracao. Login (usuarios) do destino e preservado.
+       XML no zip, se houver (backup antigo), e ignorado."""
     if not zipfile.is_zipfile(zip_path):
         raise ValueError('Arquivo nao e um ZIP valido.')
     tmp = zip_path + '.extract'
     if os.path.isdir(tmp):
         shutil.rmtree(tmp, ignore_errors=True)
     os.makedirs(tmp, exist_ok=True)
-    n_emp = n_pfx = n_xml = 0
+    n_emp = n_pfx = 0
     try:
         with zipfile.ZipFile(zip_path, 'r') as zf:
-            zf.extractall(tmp)
+            for info in zf.infolist():
+                nome = info.filename.replace('\\', '/').lstrip('/')
+                if nome.startswith('XML/') or nome == 'XML':
+                    continue
+                zf.extract(info, tmp)
         os.makedirs(cert_dir, exist_ok=True)
-        os.makedirs(xml_dir, exist_ok=True)
         pasta_cert = os.path.join(tmp, CERT_IN_ZIP)
         if os.path.isdir(pasta_cert):
             for a in os.listdir(pasta_cert):
@@ -222,8 +185,6 @@ def restaurar_zip(zip_path, db_path, cert_dir, xml_dir):
                 if os.path.isfile(origem):
                     shutil.copy2(origem, os.path.join(cert_dir, a))
                     n_pfx += 1
-        pasta_xml = os.path.join(tmp, XML_IN_ZIP)
-        n_xml = _copiar_xml(pasta_xml, xml_dir)
         bak = os.path.join(tmp, DB_IN_ZIP)
         if os.path.isfile(bak) and os.path.isfile(db_path):
             src = sqlite3.connect(bak)
@@ -251,7 +212,7 @@ def restaurar_zip(zip_path, db_path, cert_dir, xml_dir):
             _remap_db_paths(db_path, cert_dir)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-    return {'empresas': n_emp, 'pfx': n_pfx, 'xml': n_xml}
+    return {'empresas': n_emp, 'pfx': n_pfx}
 
 
 def _upsert_empresas(src, dst, cert_dir):

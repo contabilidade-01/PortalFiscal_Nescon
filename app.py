@@ -30,7 +30,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=(os.environ.get('FLASK_HTTPS') == '1'),  # ativar em HTTPS (prod)
-    MAX_CONTENT_LENGTH=1024 * 1024 * 1024,  # 1 GB (backup/restauracao de XML)
+    MAX_CONTENT_LENGTH=80 * 1024 * 1024,  # backup (cadastros + certificados)
 )
 # EasyPanel (e qualquer reverse proxy) manda X-Forwarded-Proto/Host. Sem isso o
 # cookie Secure e os redirects HTTPS quebram atras do painel.
@@ -345,7 +345,7 @@ def ajuda():
 @app.route('/backup')
 @admin_required
 def backup():
-    info = bak.resumo(models.DB, CERT_DIR, SAIDA)
+    info = bak.resumo(models.DB, CERT_DIR)
     vol = bak.zip_do_volume(models.DATA_DIR)
     return render_template('backup.html', info=info,
                            volume_zip=os.path.isfile(vol),
@@ -354,16 +354,11 @@ def backup():
 @app.route('/backup/baixar')
 @admin_required
 def backup_baixar():
-    oque = request.args.get('oque') or 'leve'
-    incluir_xml = oque == 'tudo'
-    nome = 'portal-fiscal-%s-%s.zip' % (
-        'completo' if incluir_xml else 'cadastros-certificados',
-        datetime.now().strftime('%Y%m%d-%H%M'))
+    nome = 'portal-fiscal-cadastros-certificados-%s.zip' % datetime.now().strftime('%Y%m%d-%H%M')
     pasta = os.path.join(models.DATA_DIR, 'backups')
     os.makedirs(pasta, exist_ok=True)
     dest = os.path.join(pasta, nome)
-    bak.criar_zip(dest, models.DB, CERT_DIR, SAIDA,
-                  incluir_db=True, incluir_certs=True, incluir_xml=incluir_xml)
+    bak.criar_zip(dest, models.DB, CERT_DIR)
 
     @after_this_request
     def _apagar(resp):
@@ -377,9 +372,9 @@ def backup_baixar():
                      mimetype='application/zip')
 
 def _aplicar_zip(path):
-    r = bak.restaurar_zip(path, models.DB, CERT_DIR, SAIDA)
-    flash('Restaurado: %s cadastros, %s certificados, %s XML novos.' % (
-        r['empresas'], r['pfx'], r['xml']), 'ok')
+    r = bak.restaurar_zip(path, models.DB, CERT_DIR)
+    flash('Restaurado: %s cadastros e %s certificados. XML não entra neste backup — o servidor puxa de novo.' % (
+        r['empresas'], r['pfx']), 'ok')
 
 @app.route('/backup/restaurar', methods=['POST'])
 @admin_required

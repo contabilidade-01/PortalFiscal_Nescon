@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-import os, sys, sqlite3, tempfile, shutil
+import os, sys, sqlite3, tempfile, shutil, zipfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from engines import backup as bak
 
@@ -36,7 +36,7 @@ def _init(path, empresas=(), office=None, user='admin'):
     c.commit(); c.close()
 
 
-def test_backup_restaura_cadastro_cert_xml_e_preserva_admin():
+def test_backup_sem_xml_e_preserva_admin():
     root = tempfile.mkdtemp()
     try:
         origem = os.path.join(root, 'pc')
@@ -52,24 +52,24 @@ def test_backup_restaura_cadastro_cert_xml_e_preserva_admin():
         db_pc = os.path.join(origem, 'portal_fiscal.db')
         _init(db_pc, empresas=[('111', 'ACME', pfx_pc, 's3nha')], office=pfx_pc)
         zip_path = os.path.join(root, 'b.zip')
-        bak.criar_zip(zip_path, db_pc, os.path.join(origem, 'Certificados'),
-                      os.path.join(origem, 'XML'))
+        bak.criar_zip(zip_path, db_pc, os.path.join(origem, 'Certificados'))
+        with zipfile.ZipFile(zip_path) as zf:
+            nomes = zf.namelist()
+        assert not any(n.replace('\\', '/').startswith('XML/') for n in nomes)
 
         db_sv = os.path.join(dest, 'portal_fiscal.db')
         _init(db_sv, user='servidor')
-        r = bak.restaurar_zip(zip_path, db_sv, os.path.join(dest, 'Certificados'),
-                              os.path.join(dest, 'XML'))
+        r = bak.restaurar_zip(zip_path, db_sv, os.path.join(dest, 'Certificados'))
         assert r['empresas'] == 1
         assert r['pfx'] == 1
-        assert r['xml'] == 1
+        assert 'xml' not in r
         c = sqlite3.connect(db_sv); c.row_factory = sqlite3.Row
         emp = c.execute('SELECT * FROM empresas WHERE cnpj=?', ('111',)).fetchone()
         assert emp['nome'] == 'ACME'
         assert emp['senha'] == 's3nha'
-        novo = emp['arquivo'].replace('\\', '/')
-        assert novo.endswith('Certificados/empresa.pfx') or novo.endswith('Certificados\\empresa.pfx')
+        assert os.path.basename(emp['arquivo']) == 'empresa.pfx'
         assert os.path.isfile(os.path.join(dest, 'Certificados', 'empresa.pfx'))
-        assert os.path.isfile(os.path.join(dest, 'XML', '111', '2026-07', 'NFe', '01_entrada', 'n1.xml'))
+        assert not os.path.isfile(os.path.join(dest, 'XML', '111', '2026-07', 'NFe', '01_entrada', 'n1.xml'))
         off = c.execute("SELECT valor FROM parametros WHERE chave='office_arquivo'").fetchone()['valor']
         assert 'Certificados' in off.replace('\\', '/')
         users = [u['login'] for u in c.execute('SELECT login FROM usuarios')]
@@ -84,6 +84,6 @@ def test_resumo_e_fmt():
 
 
 if __name__ == '__main__':
-    test_backup_restaura_cadastro_cert_xml_e_preserva_admin()
+    test_backup_sem_xml_e_preserva_admin()
     test_resumo_e_fmt()
     print('ok')
