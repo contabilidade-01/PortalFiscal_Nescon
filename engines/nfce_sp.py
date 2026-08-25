@@ -22,7 +22,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(_BASE, 'config.json'), encoding='utf-8'))
-SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG['pasta_saida_xml']
+SAIDA = models.XML_DIR
 
 URL_LISTAGEM = "https://nfce.fazenda.sp.gov.br/ws/NFCeListagemChaves.asmx"
 URL_DOWNLOAD = "https://nfce.fazenda.sp.gov.br/ws/NFCeDownloadXML.asmx"

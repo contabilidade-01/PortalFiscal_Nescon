@@ -35,9 +35,51 @@ TIPO_PARA_PERM = {
 }
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.environ.get('FISCAL_DATA_DIR', BASE)
+
+def parece_caminho_windows(p):
+    """True para 'C:\\...' / 'C:/...' — no Linux isso vira pasta DENTRO de /app, fora do volume."""
+    p = (p or '').strip()
+    if len(p) >= 3 and p[0].isalpha() and p[1] == ':' and p[2] in '\\/':
+        return True
+    return p.startswith('\\\\')
+
+def em_docker():
+    return os.path.exists('/.dockerenv')
+
+def _resolver_data_dir():
+    env = (os.environ.get('FISCAL_DATA_DIR') or '').strip()
+    if em_docker():
+        if env and not parece_caminho_windows(env):
+            return env
+        return '/app/data'
+    if env:
+        return env
+    return BASE
+
+DATA_DIR = _resolver_data_dir()
 os.makedirs(DATA_DIR, exist_ok=True)
 DB = os.path.join(DATA_DIR, 'portal_fiscal.db')
+
+def pasta_xml():
+    """Onde gravar XML. No Docker ignora pasta_saida_xml do PC (OneDrive C:\\...)."""
+    env = (os.environ.get('FISCAL_XML_DIR') or '').strip()
+    if env and not parece_caminho_windows(env):
+        return env
+    if os.name == 'nt' and not em_docker():
+        if env:
+            return env
+        try:
+            import json
+            cfg = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
+            p = (cfg.get('pasta_saida_xml') or '').strip()
+            if p:
+                return p
+        except Exception:
+            pass
+    return os.path.join(DATA_DIR, 'XML')
+
+XML_DIR = pasta_xml()
+os.makedirs(XML_DIR, exist_ok=True)
 
 def con():
     c = sqlite3.connect(DB, timeout=30)
@@ -408,12 +450,16 @@ def diagnostico_persistencia():
             n_jobs = c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
     except Exception:
         pass
+    xml = os.path.abspath(XML_DIR)
+    xml_no_volume = em_docker() and not xml.startswith(os.path.abspath(DATA_DIR) + os.sep) and xml != os.path.abspath(DATA_DIR)
     return {
         'data_dir': data,
+        'xml_dir': xml,
         'db': DB,
         'in_container': bool(in_container),
         'volume_montado': bool(mounted),
-        'risco_apagar_no_deploy': bool(in_container and not mounted),
+        'xml_no_volume': bool(xml_no_volume),
+        'risco_apagar_no_deploy': bool(in_container and (not mounted or xml_no_volume)),
         'empresas': n_emp,
         'jobs': n_jobs,
         'db_bytes': db_bytes,

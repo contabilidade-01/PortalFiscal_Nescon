@@ -56,6 +56,8 @@ Rode duas vezes: uma para `SECRET_KEY`, outra (opcional) para senha admin.
 4. **Mounts → Add Volume:** nome `portal-fiscal-data` → destino **`/app/data`**. Sem isso, cada redeploy apaga banco, XML e certificados.
 
 > **Sintoma clássico:** o site abre, Waitress diz `Serving on 0.0.0.0:8000`, mas depois de cada push as empresas, execuções e XML somem. O front não “resetou”: o container nasceu sem disco persistente e o `init_db()` criou um banco vazio (só `admin`). Confira `GET /healthz` → `volume_montado` deve ser `true` e `risco_apagar_no_deploy` `false`.
+>
+> Com o volume **já** em `/app/data`, outro furo: o `config.json` do PC aponta XML para OneDrive (`C:/Users/...`). No Linux isso vira pasta **dentro de `/app`**, fora do volume. Várias linhas `Serving on` seguidas costumam ser **restart** (healthcheck) por `chown -R` lento no volume — o entrypoint não faz mais isso. No log do boot deve aparecer `portal-fiscal DATA_DIR=/app/data ... XML=/app/data/XML`.
 
 5. **Domains:** ex. `fiscal.gestaoempresa.com` → serviço `web` / porta 8000 → HTTPS Let's Encrypt.
 6. **Auto Deploy:** ligado, para rebuild a cada push em `main`.

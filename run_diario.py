@@ -13,7 +13,7 @@ from datetime import datetime
 BASE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, BASE)
 import models, worker
 
-LOG = os.path.join(os.environ.get('FISCAL_DATA_DIR', BASE), 'logs')
+LOG = os.path.join(models.DATA_DIR, 'logs')
 os.makedirs(LOG, exist_ok=True)
 
 def log(m):

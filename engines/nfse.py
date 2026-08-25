@@ -12,7 +12,7 @@ from engines import guard
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
-SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG['pasta_saida_xml']; NFSE = CFG['nfse']
+SAIDA = models.XML_DIR; NFSE = CFG['nfse']
 BASE_URL = NFSE['base_url'].rstrip('/')
 
 def _decode(b64gzip):

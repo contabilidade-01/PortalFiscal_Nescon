@@ -13,7 +13,7 @@ import models
 from engines import certs
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SAIDA = os.environ.get('FISCAL_XML_DIR') or json.load(open(os.path.join(_BASE, 'config.json'), encoding='utf-8'))['pasta_saida_xml']
+SAIDA = models.XML_DIR
 
 NS_NFE = 'http://www.portalfiscal.inf.br/nfe'
 NS_SIG = 'http://www.w3.org/2000/09/xmldsig#'
