@@ -1,66 +1,115 @@
-# Deploy — Portal Fiscal Nescon (EasyPanel, mesmo VPS do GClick)
+# Deploy — Portal Fiscal Nescon (EasyPanel)
 
-App **separado** no EasyPanel (não misturar no repo do GClick). Molde: o `PLANO_DEPLOY_EASYPANEL.md` do GClick.
+App **separado** no EasyPanel (não misturar com GClick / nescon-clientes).
+Repositório: `https://github.com/contabilidade-01/PortalFiscal_Nescon` · branch `main`.
 
 ## Arquitetura
-```
-GitHub (codigo)  ->  EasyPanel (build Dockerfile)  ->  Container (waitress:8000)
-                                                          |
-                     Volume persistente  -----------------+
-                     /app/data  (banco + XML + Certificados)
-```
-- Imagem = só código. Dados/segredos vêm do **volume** e das **env vars** (`.dockerignore` garante).
-- **Separacao codigo x dados** via `FISCAL_DATA_DIR=/app/data` (banco), `FISCAL_XML_DIR=/app/data/XML`,
-  certificados em `/app/data/Certificados`.
 
-## 1. Antes de expor (segurança)
+```
+GitHub (código)  →  EasyPanel (build Dockerfile)  →  Container (waitress :8000)
+                                                          │
+                     Volume persistente ──────────────────┘
+                     /app/data  →  banco + XML + Certificados + logs
+```
+
+- Imagem = só código. XML, `.pfx` e SQLite **nunca** entram no Git nem na imagem.
+- Segredos = env vars do EasyPanel (modelo: `.env.example`).
+- Relógio do container = `America/Sao_Paulo` (jobs e `/status` no horário de Brasília).
+
+| Caminho no volume | Conteúdo |
+|---|---|
+| `/app/data/portal_fiscal.db` | Banco (empresas, usuários, fila de jobs) |
+| `/app/data/XML/` | XML baixados da SEFAZ |
+| `/app/data/Certificados/` | A1 (`.pfx`) enviados pelo painel |
+| `/app/data/logs/` | `run_diario.log` (se usar o script) |
+
+## 1. Variáveis de ambiente (EasyPanel → Environment)
+
+Cole no painel (ou copie `.env.example` → `.env` local). **Não commitar** `SECRET_KEY` / senhas.
+
+| Variável | Obrigatória | Valor no EasyPanel | O que faz |
+|---|---|---|---|
+| `SECRET_KEY` | sim | string aleatória ≥ 32 | Assina o cookie de sessão |
+| `ADMIN_SENHA_INICIAL` | sim (1º boot) | senha forte | Senha do `admin` só se o banco estiver vazio |
+| `FLASK_HTTPS` | sim | `1` | Cookie `Secure` (domínio HTTPS) |
+| `TRUST_PROXY` | sim | `1` | Confia em `X-Forwarded-*` do proxy EasyPanel |
+| `FISCAL_DATA_DIR` | já na imagem | `/app/data` | Onde mora o banco |
+| `FISCAL_XML_DIR` | já na imagem | `/app/data/XML` | Onde grava XML |
+| `TZ` | já na imagem | `America/Sao_Paulo` | Horário do robô e da UI |
+| `FISCAL_CRON` | já na imagem | `1` | Robô diário dentro do container |
+| `FISCAL_CRON_HORA` | já na imagem | `06:00` | Hora de enfileirar o job completo |
+| `CERT_KEY` | não | — | Reserva da Etapa 4b (senha do PFX ainda é texto no banco) |
+
+Gerar as chaves **na sua máquina**:
+
 ```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"   # SECRET_KEY
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
-- Definir `SECRET_KEY` (aleatória) e `ADMIN_SENHA_INICIAL` (senha forte) nas env vars.
-- No 1º login, o sistema avisa se ainda estiver em `admin/admin` (banner) → trocar em **/trocar-senha**.
-- ⚠️ **Pendência de segurança (Etapa 4b):** a senha do certificado ainda é gravada em texto no banco.
-  Antes de produção real, implementar criptografia (Fernet, env `CERT_KEY`) — ver `PROGRESSO_PLATAFORMA.md`.
 
-## 2. Subir no GitHub
+Rode duas vezes: uma para `SECRET_KEY`, outra (opcional) para senha admin.
+
+## 2. EasyPanel → Create → App (recomendado)
+
+1. **Source:** GitHub `contabilidade-01/PortalFiscal_Nescon`, branch `main`.
+2. **Build:** Dockerfile (raiz). Porta do container: **8000**.
+3. **Environment:** as variáveis da tabela acima (`SECRET_KEY`, `ADMIN_SENHA_INICIAL`, `FLASK_HTTPS=1`, `TRUST_PROXY=1`). O resto já vem na imagem.
+4. **Mounts → Add Volume:** nome `portal-fiscal-data` → destino **`/app/data`**. Sem isso, cada redeploy apaga banco, XML e certificados.
+5. **Domains:** ex. `fiscal.gestaoempresa.com` → serviço `web` / porta 8000 → HTTPS Let's Encrypt.
+6. **Auto Deploy:** ligado, para rebuild a cada push em `main`.
+
+Healthcheck interno: `GET /healthz` (sem login). O EasyPanel pode usar a mesma URL.
+
+## 3. Alternativa: Docker Compose
+
+Se o projeto no EasyPanel for tipo **Compose**, aponte para `docker-compose.yml` na raiz.
+Segredos: cole no Environment do serviço `web` (não use `env_file` no painel se o `.env` não existir no Git).
+
+Local:
+
 ```bash
-cd PortalFiscal_Nescon
-git init && git add . && git commit -m "Portal Fiscal: deploy inicial"
-git branch -M main
-git remote add origin https://github.com/<usuario>/portal-fiscal-nescon.git
-git push -u origin main
+cp .env.example .env   # preencha SECRET_KEY e ADMIN_SENHA_INICIAL
+docker compose up -d --build
+# http://localhost:8000
 ```
-> O `.gitignore` bloqueia `.env`, `*.db`, **`XML/`**, **`Certificados/`**, `*.pfx`. Conferir no GitHub que NÃO subiram.
 
-## 3. EasyPanel → Create → App
-- Source: GitHub (repo `portal-fiscal-nescon`, branch `main`); Build: **Dockerfile**; Port: **8000**.
-- **Environment:**
-  ```env
-  SECRET_KEY=<aleatoria_32>
-  ADMIN_SENHA_INICIAL=<senha_forte>
-  FISCAL_DATA_DIR=/app/data
-  FISCAL_XML_DIR=/app/data/XML
-  FLASK_HTTPS=1
-  # CERT_KEY=<chave_fernet>   # quando a Etapa 4b estiver pronta
-  ```
-- **Mounts → Add Volume:** `portal-fiscal-data` → `/app/data`  (CRÍTICO — sem isso, redeploy apaga tudo).
-- **Domains:** ex. `fiscal.gestaoempresa.com` (HTTPS Let's Encrypt automático).
+## 4. Primeiro acesso
 
-## 4. Levar dados + certificados (⚠️ ponto de atenção)
-Os certificados hoje estão em caminhos do **OneDrive local** (coluna `empresas.arquivo`). No servidor eles precisam existir em `/app/data/Certificados` **e** os caminhos reapontados. Duas opções:
-- **A) Recomeço limpo:** subir o app → **Clientes** importa/sincroniza do GClick → **Certificados → Vincular**
-  (upload dos .pfx) reaponta cada um para `/app/data/Certificados`. (mais simples, recomendado)
-- **B) Migrar o banco:** enviar `portal_fiscal.db` para `/app/data/` + copiar os `.pfx` para
-  `/app/data/Certificados/` + rodar um UPDATE reapontando `empresas.arquivo`. (preserva histórico)
+1. Abra `https://fiscal.<seu-dominio>/login`.
+2. Login `admin` + a senha de `ADMIN_SENHA_INICIAL`.
+3. Troque a senha em **/trocar-senha**.
+4. **Clientes** → cadastre/importe. **Certificados → Vincular** (upload dos `.pfx`) — os arquivos caem em `/app/data/Certificados`.
 
-## 5. Agendamento diário (no servidor)
-- Container: adicionar um **cron** no EasyPanel (ou um segundo serviço/scheduler) rodando
-  `python run_diario.py` 1x/dia. Alternativa: o worker já roda no processo web; criar um cron
-  que faça um POST em `/run/...` autenticado, OU um job agendado que chama `run_diario.py`.
+Não copie o `portal_fiscal.db` do Windows se os caminhos dos PFX forem `C:\Users\...`. No servidor o caminho tem que ser o do volume. Opção limpa = recomeçar o cadastro e reenviar os certificados. Opção B (avançada): copiar o `.db` + os `.pfx` para o volume e atualizar `empresas.arquivo` para `/app/data/Certificados/<ficheiro>.pfx`.
 
-## 6. Rodar em produção LOCAL (Windows, sem Docker)
-`pip install waitress` → `start_servidor.bat` (waitress na 5001). O worker de jobs sobe junto.
+## 5. Robô diário
 
-## 7. Backup
-Volume `/app/data` (banco + XML + certificados). Agendar backup diário no EasyPanel.
-**Atenção LGPD:** esse volume contém certificados — tratar com o mesmo cuidado de dados sensíveis.
+Com `FISCAL_CRON=1` o próprio processo web enfileira um job `completo` todo dia às `FISCAL_CRON_HORA` (padrão 06:00 BRT): entradas NF-e, ciência 210210, saídas autXML, NFS-e e NFC-e SP.
+
+Não precisa de Tarefa Agendada do Windows no VPS. Reserva: Cron do EasyPanel com
+
+```text
+python /app/run_diario.py
+```
+
+(só use um dos dois para não duplicar a varredura / anti-656.)
+
+## 6. Backup (LGPD)
+
+Agende backup **diário do volume** `portal-fiscal-data`. Esse volume tem certificados A1 e XML de clientes — o mesmo cuidado de pasta de certificado no PC.
+
+## 7. O que NÃO sobe no Git / na imagem
+
+Confirmado pelo `.gitignore` e `.dockerignore`:
+
+- `Certificados/`, `*.pfx`, `*.p12`, `*.pem`
+- `XML/`, `*.db`, `logs/`, `.env`
+
+## 8. Windows local (sem Docker)
+
+`start.bat` → http://localhost:5001 (Flask). Não use `FLASK_HTTPS` nem `FISCAL_CRON` no PC se já existir a Tarefa Agendada `PortalFiscalNescon`.
+
+`start_servidor.bat` = waitress na 5001 (precisa `pip install waitress`).
+
+## Pendência de segurança
+
+A senha do certificado A1 ainda é gravada em texto no SQLite. Antes de expor o painel a mais gente, cifrar com Fernet (`CERT_KEY`) — ver `docs/PROGRESSO_PLATAFORMA.md` Etapa 4b.

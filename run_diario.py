@@ -8,7 +8,8 @@ from datetime import datetime
 BASE = os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0, BASE)
 import models, worker
 
-LOG = os.path.join(BASE, 'logs'); os.makedirs(LOG, exist_ok=True)
+LOG = os.path.join(os.environ.get('FISCAL_DATA_DIR', BASE), 'logs')
+os.makedirs(LOG, exist_ok=True)
 
 def log(m):
     linha = '%s  %s' % (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), m)

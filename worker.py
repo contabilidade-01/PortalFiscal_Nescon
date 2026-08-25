@@ -6,7 +6,7 @@
    - Claim atomico -> seguro se o run_diario (tarefa agendada) tambem processar.
    - Processa 1 job por vez e 1 empresa por vez (respeita anti-bloqueio).
 """
-import threading, time
+import os, threading, time
 from datetime import datetime, timedelta
 import models
 from engines import nfe, nfse, ciencia, nfce_sp
@@ -130,6 +130,27 @@ def processar_fila_ate_vazia(limite=50):
         n += 1
     return n
 
+def _loop_agendado():
+    """Enfileira o job 'completo' 1x/dia no horario FISCAL_CRON_HORA (HH:MM, TZ do container).
+       So dispara na janela de 2 min apos o alvo — restart as 10h nao puxa a SEFAZ de novo."""
+    hora_s = os.environ.get('FISCAL_CRON_HORA', '06:00')
+    try:
+        hh, mm = [int(x) for x in hora_s.split(':', 1)]
+    except ValueError:
+        hh, mm = 6, 0
+    last = None
+    while True:
+        try:
+            now = datetime.now()
+            alvo = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            stamp = now.strftime('%Y-%m-%d')
+            if last != stamp and now >= alvo and (now - alvo).total_seconds() < 120:
+                last = stamp
+                enfileirar('completo', origem='agendado')
+        except Exception:
+            pass
+        time.sleep(20)
+
 def iniciar_worker():
     global _started
     with _lock:
@@ -138,6 +159,8 @@ def iniciar_worker():
         try: reconciliar_travados()   # limpa job orfao do processo anterior
         except Exception: pass
         threading.Thread(target=_loop, daemon=True).start()
+        if os.environ.get('FISCAL_CRON', '0') == '1':
+            threading.Thread(target=_loop_agendado, daemon=True, name='fiscal-cron').start()
 
 def status():
     with models.con() as c:

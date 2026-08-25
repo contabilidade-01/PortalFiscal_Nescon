@@ -10,6 +10,7 @@ from flask import (Flask, request, redirect, url_for, session, flash,
                    render_template, send_file, abort)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 import models
 import worker
 from engines import certs, nfe, nfse, conferencia, cfop, monofasico
@@ -20,6 +21,7 @@ CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
 CERT_DIR = os.path.join(models.DATA_DIR, 'Certificados')
 SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG.get('pasta_saida_xml') or os.path.join(models.DATA_DIR, 'XML')
 os.makedirs(CERT_DIR, exist_ok=True)
+os.makedirs(SAIDA, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'portal-fiscal-nescon-dev-trocar-em-producao')
@@ -29,8 +31,22 @@ app.config.update(
     SESSION_COOKIE_SECURE=(os.environ.get('FLASK_HTTPS') == '1'),  # ativar em HTTPS (prod)
     MAX_CONTENT_LENGTH=25 * 1024 * 1024,  # limite de upload (certificados sao pequenos)
 )
+# EasyPanel (e qualquer reverse proxy) manda X-Forwarded-Proto/Host. Sem isso o
+# cookie Secure e os redirects HTTPS quebram atras do painel.
+if os.environ.get('TRUST_PROXY', os.environ.get('FLASK_HTTPS')) == '1':
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 models.init_db()
 worker.iniciar_worker()  # motor de jobs em background (roda mesmo sem usuario logado)
+
+@app.route('/healthz')
+def healthz():
+    """Healthcheck do EasyPanel/Docker — sem login."""
+    try:
+        with models.con() as c:
+            c.execute('SELECT 1').fetchone()
+        return {'ok': True}, 200
+    except Exception:
+        return {'ok': False}, 503
 
 def login_req(f):
     @wraps(f)

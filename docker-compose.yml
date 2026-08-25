@@ -1,0 +1,31 @@
+# Alternativa ao "App + Dockerfile" no EasyPanel.
+# No painel: Create → Compose → este arquivo (raiz do repo).
+# Segredos: cole SECRET_KEY e ADMIN_SENHA_INICIAL no Environment do serviço web.
+# Local:  docker compose --env-file .env up -d --build
+
+services:
+  web:
+    build: .
+    image: portal-fiscal-nescon
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: America/Sao_Paulo
+      FISCAL_DATA_DIR: /app/data
+      FISCAL_XML_DIR: /app/data/XML
+      FISCAL_CRON: "1"
+      FISCAL_CRON_HORA: "06:00"
+      TRUST_PROXY: "1"
+      FLASK_HTTPS: "1"
+    volumes:
+      - portal-fiscal-data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  portal-fiscal-data:

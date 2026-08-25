@@ -1,10 +1,11 @@
 # Portal Fiscal Nescon — Plataforma Fiscal (NF-e + NFS-e)
 
 > **Documento-síntese para iniciar uma nova conversa.** Lê este primeiro; os detalhes profundos
-> estão em `docs/HANDOFF.md` (motores), `docs/PROGRESSO_PLATAFORMA.md` (etapas da refatoração),
-> `docs/README_DEPLOY.md` (deploy) e `../DOCUMENTACAO_PUXADOR_NFE.md` (aprofundamento NF-e).
-> **Pasta:** `TESTENFE/PortalFiscal_Nescon`. **Rodar:** `start.bat` → http://localhost:5001 (admin/admin).
-> **Python:** `C:\Users\parce\AppData\Local\Programs\Python\Python313\python.exe`.
+> estão em `docs/HANDOFF.md` (motores), `docs/PROGRESSO_PLATAFORMA.md` (etapas da refatoração) e
+> `docs/README_DEPLOY.md` (EasyPanel / VPS).
+> **Local:** `start.bat` → http://localhost:5001 (admin/admin).
+> **Produção:** GitHub `contabilidade-01/PortalFiscal_Nescon` → EasyPanel (Dockerfile, porta 8000).
+> Env: copie `.env.example`. Python local: `C:\Users\parce\AppData\Local\Programs\Python\Python313\python.exe`.
 
 ---
 
@@ -24,7 +25,7 @@ com a chave. Compartilha a base de clientes com o **GClick** (outro sistema do J
   - **Ciência 210210**: aceita pela SEFAZ (via `xmlsec`).
 - **Robô diário** (Tarefa Agendada Windows 06:00) + **jobs em background** (roda deslogado, com status ao vivo).
 - **RBAC, menu modular, exclusão manual de XML, segurança base** — tudo testado.
-- **Git iniciado**, 1º commit feito, pronto para push. **Deploy** planejado (EasyPanel, mesmo VPS do GClick) — ainda não feito.
+- **Git** no GitHub (`contabilidade-01/PortalFiscal_Nescon`). **Deploy EasyPanel:** `docs/README_DEPLOY.md` + `.env.example`.
 
 ## 3. Fatos técnicos COMPROVADOS (não reinventar)
 - **Serviço NF-e:** `NFeDistribuicaoDFe` (SOAP 1.2, `distDFeInt` v1.01, mTLS). É o mesmo que a SIEG usa.
@@ -53,7 +54,8 @@ engines/
 templates/        base(menu+barra status) login dashboard clientes certificados downloads
                   usuarios usuario_form trocar_senha das cliente_form
 config.json       porta/limites (caminho XML local; env FISCAL_XML_DIR sobrepoe em prod)
-Dockerfile .dockerignore .gitignore requirements.txt   -> deploy EasyPanel (waitress+libxmlsec1)
+.env.example      modelo das env vars do EasyPanel (SECRET_KEY, ADMIN_SENHA_INICIAL, cron…)
+Dockerfile docker-compose.yml entrypoint.sh  -> deploy EasyPanel (waitress :8000 + volume /app/data)
 DADOS (fora do Git): portal_fiscal.db · XML/<cnpj>/<AAAA-MM>/{NFe,NFSe}/... · Certificados/ · logs/
 ```
 
@@ -70,15 +72,13 @@ DADOS (fora do Git): portal_fiscal.db · XML/<cnpj>/<AAAA-MM>/{NFe,NFSe}/... · 
   (env `CERT_KEY`) antes de produção real — plano em `docs/PROGRESSO_PLATAFORMA.md`. Falta também CSRF nos forms.
 
 ## 7. Como continuar (próximos passos)
-1. **Push:** criar repo no GitHub → `git remote add origin <url>` → `git push -u origin main`.
+1. **Deploy EasyPanel** (app separado, mesmo VPS do GClick): seguir **`docs/README_DEPLOY.md`**. Env em `.env.example`. Re-vincular certificados no volume `/app/data/Certificados`.
 2. **Etapa 4b:** cifrar senha do cert (Fernet/CERT_KEY). **P1 de segurança.**
 3. **Cobertura de certificados (29→mais):** baixar a pasta cloud-only `...JEANDSON...\0002 - Certificado Digital`
    (senhas no nome) e rodar `vincular_com_senhatxt.py`. Os `Senha.txt` cobrem os avulsos.
 4. **autXML dos clientes:** espalhar o CNPJ da Nescon `35.736.034/0001-23` no emissor de cada cliente (Bling:
    Config→Notas Fiscais→Config NF-e→autorizados). Marketplace configura no EMISSOR, não no painel. Planilha de
    triagem: `../Triagem_autXML_Clientes.xlsx`.
-5. **Deploy EasyPanel** (app separado, mesmo VPS do GClick): seguir `docs/README_DEPLOY.md`. Reapontar caminhos dos certs
-   p/ `/app/data/Certificados` (re-vincular por upload). Cron chamando `run_diario.py`.
 
 ## 8. Projetos relacionados (contexto)
 - **GClick** (`01_Jean/00_Claude/00_PROJETOS/GCLICK`): base dos 90 clientes; molde de deploy EasyPanel. NÃO misturar.
