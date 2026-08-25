@@ -1,56 +1,9 @@
 {% extends 'base.html' %}
-{% block titulo %}Backup / subir dados{% endblock %}
+{% block titulo %}Backup{% endblock %}
 {% block corpo %}
-<style>
-.hint{font-size:13px;color:var(--sub);line-height:1.45;margin:6px 0 0}
-.flow{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 4px}
-.flow .step{flex:1 1 220px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
-.flow .step b{display:block;font-size:12px;color:var(--brand1);letter-spacing:.3px;margin-bottom:4px}
-.nums{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0 0}
-.nums .n{flex:1 1 140px;background:var(--surface2);border:1px solid var(--line);border-radius:11px;padding:10px 12px}
-.nums .n b{display:block;font-size:20px;letter-spacing:-.4px}
-.nums .n span{font-size:12px;color:var(--muted)}
-.warnbox{background:var(--errbg);color:var(--err);border-radius:11px;padding:11px 14px;font-size:13px;margin-top:12px}
-</style>
-
 <div class="card">
-  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Levar os dados do PC para o servidor</h2>
-  <p class="desc">Sobe <b>empresas, flags, NSU e certificados A1</b>. <b>XML não entra</b> — o servidor puxa as notas de novo na SEFAZ.</p>
-  <div class="flow">
-    <div class="step"><b>1 · NO PC</b>Abra este Portal no computador, baixe o ZIP e guarde na Área de trabalho.</div>
-    <div class="step"><b>2 · NO SERVIDOR</b>Abra o mesmo menu neste site da internet e envie o ZIP.</div>
-    <div class="step"><b>3 · PRONTO</b>Os cadastros e os .pfx entram no volume. O login admin do servidor <b>não muda</b>.</div>
-  </div>
-  <div class="nums">
-    <div class="n"><b>{{ info.empresas }}</b><span>empresas neste aparelho</span></div>
-    <div class="n"><b>{{ info.pfx }}</b><span>certificados .pfx ({{ info.cert_fmt }})</span></div>
-    <div class="n"><b>{{ info.leve_fmt }}</b><span>tamanho do ZIP</span></div>
-  </div>
-</div>
-
-<div class="card">
-  <h2>1. Baixar (este computador)</h2>
-  <p class="hint">Clique <b>no PC de trabalho</b>, não no servidor. O arquivo vai para os Downloads do navegador.</p>
-  <div class="row" style="margin-top:14px">
-    <a class="btn btn-primary" href="{{ url_for('backup_baixar') }}">Baixar cadastros + certificados ({{ info.leve_fmt }})</a>
-  </div>
-</div>
-
-<div class="card">
-  <h2>2. Subir (este servidor)</h2>
-  <p class="hint">Aqui no site da internet: envie o ZIP que você baixou no PC.</p>
-  <form method="post" action="{{ url_for('backup_restaurar') }}" enctype="multipart/form-data" style="margin-top:12px">
-    <label>Arquivo .zip do backup</label>
-    <input type="file" name="zip" accept=".zip" required>
-    <button class="btn btn-success" style="margin-top:14px" onclick="return confirm('Isso atualiza os cadastros e copia os certificados. XML não entra. O usuário admin deste servidor continua o mesmo. Continuar?');">Enviar e restaurar</button>
-  </form>
-  {% if volume_zip %}
-  <form method="post" action="{{ url_for('backup_restaurar_volume') }}" style="margin-top:16px">
-    <button class="btn btn-ghost" onclick="return confirm('Restaurar o arquivo {{ volume_nome }} que já está no volume do servidor?');">Restaurar {{ volume_nome }} que já está no volume</button>
-  </form>
-  {% else %}
-  <p class="hint">Se o upload pelo navegador falhar, no EasyPanel coloque o ZIP no volume com o nome <code>{{ volume_nome }}</code> (pasta <code>/app/data</code>) e volte nesta tela.</p>
-  {% endif %}
-  <div class="warnbox">O ZIP tem <b>certificados A1 e senhas</b>. Não envie por WhatsApp / e-mail. Só neste upload ou no volume do EasyPanel.</div>
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Backup</h2>
+  <p class="desc">Tela só para <b>baixar</b> e <b>subir</b> cadastros e certificados A1. Use no PC para gerar o ZIP e no servidor para importar. XML não entra — o servidor puxa as notas de novo.</p>
+  {% include '_backup_acoes.html' %}
 </div>
 {% endblock %}

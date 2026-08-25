@@ -342,14 +342,25 @@ def ajuda():
     return render_template('ajuda.html')
 
 # ---- Backup / restauracao (admin) — migrar Windows -> EasyPanel ----
+def _backup_ctx():
+    vol = bak.zip_do_volume(models.DATA_DIR)
+    return {
+        'info': bak.resumo(models.DB, CERT_DIR),
+        'volume_zip': os.path.isfile(vol),
+        'volume_nome': bak.RESTAURAR_VOLUME,
+    }
+
+def _redir_backup():
+    if (request.form.get('voltar') or '') == 'config':
+        return redirect(url_for('configuracoes') + '#backup')
+    return redirect(url_for('backup'))
+
 @app.route('/backup')
 @admin_required
 def backup():
-    info = bak.resumo(models.DB, CERT_DIR)
-    vol = bak.zip_do_volume(models.DATA_DIR)
-    return render_template('backup.html', info=info,
-                           volume_zip=os.path.isfile(vol),
-                           volume_nome=bak.RESTAURAR_VOLUME)
+    ctx = _backup_ctx()
+    ctx['voltar'] = 'backup'
+    return render_template('backup.html', **ctx)
 
 @app.route('/backup/baixar')
 @admin_required
@@ -382,7 +393,7 @@ def backup_restaurar():
     fobj = request.files.get('zip')
     if not fobj or not fobj.filename:
         flash('Escolha o arquivo .zip do backup.', 'erro')
-        return redirect(url_for('backup'))
+        return _redir_backup()
     pasta = os.path.join(models.DATA_DIR, 'backups')
     os.makedirs(pasta, exist_ok=True)
     dest = os.path.join(pasta, 'upload-%s.zip' % datetime.now().strftime('%Y%m%d-%H%M%S'))
@@ -396,7 +407,7 @@ def backup_restaurar():
             os.remove(dest)
         except OSError:
             pass
-    return redirect(url_for('backup'))
+    return _redir_backup()
 
 @app.route('/backup/restaurar-volume', methods=['POST'])
 @admin_required
@@ -404,12 +415,12 @@ def backup_restaurar_volume():
     vol = bak.zip_do_volume(models.DATA_DIR)
     if not os.path.isfile(vol):
         flash('Não achei %s na pasta de dados do servidor. Envie o zip pelo formulário ou coloque o arquivo nesse nome no volume.' % bak.RESTAURAR_VOLUME, 'erro')
-        return redirect(url_for('backup'))
+        return _redir_backup()
     try:
         _aplicar_zip(vol)
     except Exception as e:
         flash('Não deu para restaurar: %s' % str(e)[:180], 'erro')
-    return redirect(url_for('backup'))
+    return _redir_backup()
 
 # ---- Configuracoes (admin) — inclui a busca de NFC-e SP ----
 @app.route('/configuracoes', methods=['GET', 'POST'])
@@ -427,8 +438,10 @@ def configuracoes():
         models.set_param('nfce_limite', re.sub(r'\D', '', request.form.get('limite', '500')) or '500')
         flash('Configurações salvas.', 'ok'); return redirect(url_for('configuracoes'))
     di = (models.get_param('nfce_data_inicial') or datetime.now().strftime('%Y-%m-01'))[:10]
+    ctx = _backup_ctx()
+    ctx['voltar'] = 'config'
     return render_template('configuracoes.html', ano=di[:4], mes=di[5:7], dia=di[8:10],
-                           limite=(models.get_param('nfce_limite') or '500'))
+                           limite=(models.get_param('nfce_limite') or '500'), **ctx)
 
 # ---- Gestao de execucoes (admin) ----
 # Rotulos em portugues claro: o banco guarda slug ('nfe_entradas', 'ok'), a tela

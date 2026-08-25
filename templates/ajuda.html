@@ -85,7 +85,7 @@
     <tr><td><a href="{{ url_for('fiscal_auditoria') }}">Auditoria</a></td><td>Aponta <b>buracos na numeração</b> das notas emitidas (algo que faltou baixar).</td></tr>
     <tr><td><a href="{{ url_for('execucoes') }}">Execuções</a></td><td>Fila e histórico das buscas; dá para disparar uma nova e ver o período de cada tipo.</td></tr>
     <tr><td><a href="{{ url_for('configuracoes') }}">Configurações</a></td><td>Data inicial e limite da busca de NFC-e (varejo, SP).</td></tr>
-    <tr><td><a href="{{ url_for('backup') }}">Backup / subir dados</a></td><td>Baixar e restaurar cadastros e certificados A1 (levar o PC para o servidor). XML não entra.</td></tr>
+    <tr><td><a href="{{ url_for('backup') }}">Backup</a></td><td>Tela para <b>baixar</b> e <b>subir</b> cadastros e certificados A1. Também está no topo de <a href="{{ url_for('configuracoes') }}">Configurações</a>. XML não entra.</td></tr>
   </table>
 </div>
 {% endblock %}

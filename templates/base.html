@@ -190,7 +190,7 @@ svg{display:block}
         <a href="{{ url_for('execucoes') }}" class="{{ 'active' if ep in ['execucoes','execucao_nova'] }}">Execuções</a>
         <a href="{{ url_for('protocolos') }}" class="{{ 'active' if ep=='protocolos' }}">Protocolos</a>
         <a href="{{ url_for('configuracoes') }}" class="{{ 'active' if ep=='configuracoes' }}">Configurações</a>
-        <a href="{{ url_for('backup') }}" class="{{ 'active' if ep=='backup' }}">Backup / subir dados</a>
+        <a href="{{ url_for('backup') }}" class="{{ 'active' if ep=='backup' }}">Backup</a>
         <a href="{{ url_for('usuarios') }}" class="{{ 'active' if ep and ep.startswith('usuario') }}">Usuários</a>
         <div class="sub-h">Importações</div>
         <a href="{{ url_for('importar_pgdas') }}" class="{{ 'active' if ep=='importar_pgdas' }}">Recibo PGDAS-D</a>
@@ -198,6 +198,9 @@ svg{display:block}
     </div>
     {% endif %}
     <a href="{{ url_for('ajuda') }}" class="{{ 'active' if ep=='ajuda' else '' }}">Ajuda</a>
+    {% if papel_atual == 'admin' %}
+    <a href="{{ url_for('backup') }}" class="{{ 'active' if ep=='backup' else '' }}">Backup</a>
+    {% endif %}
   </nav>
   <div class="tb-right">
     <button class="icon-btn" id="themeBtn" title="Alternar tema" onclick="toggleTheme()">
