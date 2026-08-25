@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+{% block titulo %}Entrar{% endblock %}
+{% block full %}
+<style>
+.auth{min-height:100vh;display:grid;grid-template-columns:1.05fr .95fr}
+.auth-hero{position:relative;overflow:hidden;color:#fff;padding:56px 54px;display:flex;flex-direction:column;justify-content:space-between;
+  background:linear-gradient(150deg,#4f46e5 0%,#7c3aed 55%,#0ea5e9 130%)}
+.auth-hero::before{content:"";position:absolute;inset:0;opacity:.5;
+  background:radial-gradient(600px 300px at 80% 10%,rgba(255,255,255,.22),transparent 60%),
+             radial-gradient(500px 300px at 10% 90%,rgba(255,255,255,.14),transparent 60%);}
+.auth-hero::after{content:"";position:absolute;inset:0;opacity:.12;
+  background-image:linear-gradient(rgba(255,255,255,.6) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.6) 1px,transparent 1px);
+  background-size:46px 46px;mask:radial-gradient(circle at 70% 30%,#000,transparent 75%)}
+.auth-hero>*{position:relative;z-index:1}
+.hero-badge{display:inline-flex;align-items:center;gap:9px;font-weight:700;font-size:15px}
+.hero-badge .logo{width:40px;height:40px;border-radius:12px;background:rgba(255,255,255,.16);display:grid;place-items:center;backdrop-filter:blur(4px)}
+.hero-h1{font-size:40px;line-height:1.08;font-weight:800;letter-spacing:-1.2px;margin:0 0 16px}
+.hero-h1 span{background:linear-gradient(90deg,#fff,#c7d2fe);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-sub{font-size:16px;opacity:.9;max-width:440px;line-height:1.55}
+.feats{display:flex;flex-direction:column;gap:16px;margin-top:8px}
+.feat{display:flex;gap:14px;align-items:flex-start}
+.feat .fi{width:42px;height:42px;border-radius:12px;background:rgba(255,255,255,.15);display:grid;place-items:center;flex:none;backdrop-filter:blur(4px)}
+.feat b{display:block;font-size:15px;margin-bottom:2px} .feat p{margin:0;font-size:13px;opacity:.82;line-height:1.4}
+.hero-foot{font-size:12.5px;opacity:.7}
+.auth-form{display:grid;place-items:center;padding:40px}
+.auth-card{width:100%;max-width:390px}
+.auth-card h2{font-size:24px;letter-spacing:-.5px;margin:0 0 4px}
+.auth-card .sub{color:var(--sub);font-size:14px;margin:0 0 26px}
+.hint{margin-top:20px;padding:11px 14px;border-radius:11px;background:var(--surface2);border:1px solid var(--line);
+  font-size:12.5px;color:var(--sub);text-align:center}
+@media(max-width:860px){.auth{grid-template-columns:1fr}.auth-hero{display:none}}
+</style>
+<div class="auth">
+  <div class="auth-hero">
+    <div class="hero-badge"><span class="logo"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></span> Nescon Contabilidade</div>
+    <div>
+      <h1 class="hero-h1">Seus XML de NF-e,<br><span>direto da SEFAZ.</span></h1>
+      <p class="hero-sub">Sem SIEG, sem Arquivei. O puxador próprio do escritório — entradas, saídas e download por competência, num só lugar.</p>
+      <div class="feats" style="margin-top:34px">
+        <div class="feat"><span class="fi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l4-4m-4 4l-4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg></span><div><b>Entradas automáticas</b><p>Compras dos fornecedores pelo certificado de cada empresa.</p></div></div>
+        <div class="feat"><span class="fi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9m0 0l-4 4m4-4l4 4"/><path d="M4 7V5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v2"/></svg></span><div><b>Saídas via autXML</b><p>Vendas dos clientes centralizadas no certificado do escritório.</p></div></div>
+        <div class="feat"><span class="fi"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1zM10 12h4"/></svg></span><div><b>Download por competência</b><p>Feche o mês e baixe tudo em ZIP, pronto pro contador.</p></div></div>
+      </div>
+    </div>
+    <div class="hero-foot">🔒 Autenticação por certificado digital A1 · mTLS direto no Ambiente Nacional</div>
+  </div>
+  <div class="auth-form">
+    <div class="auth-card">
+      <h2>Bem-vindo de volta 👋</h2>
+      <p class="sub">Entre para gerenciar as empresas e baixar os XML.</p>
+      <form method="post">
+        <label>Login</label>
+        <input name="login" autofocus placeholder="seu usuário">
+        <label>Senha</label>
+        <input name="senha" type="password" placeholder="••••••••">
+        <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:22px;padding:13px">
+          Entrar
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </button>
+      </form>
+      <div class="hint">Acesso padrão inicial: <b>admin</b> / <b>admin</b> — troque depois.</div>
+    </div>
+  </div>
+</div>
+{% endblock %}

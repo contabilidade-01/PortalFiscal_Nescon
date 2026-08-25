@@ -1,0 +1,35 @@
+{% extends 'base.html' %}
+{% block titulo %}Usuários{% endblock %}
+{% block corpo %}
+<div class="card">
+  <div class="between" style="margin-bottom:14px">
+    <h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Usuários e acessos</h2>
+    <a href="{{ url_for('usuario_novo') }}" class="btn btn-primary sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Novo usuário</a>
+  </div>
+  <p class="desc" style="margin-top:-6px">Admin gerencia tudo. Operador vê/baixa apenas as empresas designadas.</p>
+  <div class="tbl-wrap">
+  <table style="min-width:640px">
+    <thead><tr><th>Nome</th><th>Login</th><th>Papel</th><th>Empresas</th><th>Status</th><th>Ações</th></tr></thead>
+    <tbody>
+    {% for u in usuarios %}
+    <tr>
+      <td class="empresa-nome">{{ u['nome'] }}</td>
+      <td class="mono">{{ u['login'] }}</td>
+      <td>{% if u['papel']=='admin' %}<span class="pill on dot">admin</span>{% else %}<span class="tag">operador</span>{% endif %}</td>
+      <td>{% if u['papel']=='admin' or u['todas_empresas'] %}<b>todas</b>{% else %}{{ cont.get(u['id'],0) }} empresa(s){% endif %}</td>
+      <td>{% if u['ativo'] %}<span class="pill on dot">ativo</span>{% else %}<span class="pill off dot">inativo</span>{% endif %}</td>
+      <td>
+        <div class="row" style="gap:6px;flex-wrap:nowrap">
+          <a href="{{ url_for('usuario_editar', uid=u['id']) }}" class="btn btn-ghost sm">Editar</a>
+          <form method="post" action="{{ url_for('usuario_excluir', uid=u['id']) }}" style="margin:0" onsubmit="return confirm('Excluir este usuário?');">
+            <button class="btn sm" style="background:var(--errbg);color:var(--err)">Excluir</button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

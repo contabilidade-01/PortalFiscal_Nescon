@@ -1,0 +1,197 @@
+{% extends 'base.html' %}
+{% block titulo %}Economia Fiscal{% endblock %}
+{% block corpo %}
+<style>
+.filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.filtros .fld{display:flex;flex-direction:column;gap:4px}
+.filtros label{margin:0}
+.filtros input,.filtros select{width:auto;padding:9px 11px;font-size:13px}
+.compbadge{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--brand1);background:color-mix(in srgb,var(--brand1) 10%,transparent);border:1px solid color-mix(in srgb,var(--brand1) 25%,var(--line));padding:6px 12px;border-radius:20px}
+.modo-tabs{display:flex;gap:6px;background:var(--surface2);padding:4px;border-radius:10px;border:1px solid var(--line)}
+.modo-tabs a{padding:7px 14px;border-radius:7px;font-weight:700;font-size:13px;color:var(--sub);text-decoration:none;display:inline-flex;gap:6px;align-items:center}
+.modo-tabs a:hover{background:color-mix(in srgb,var(--brand1) 10%,transparent);color:var(--brand1)}
+.modo-tabs a.active{background:var(--brand1);color:#fff}
+.fonte-tag{font-size:11px;font-weight:700;padding:2px 7px;border-radius:8px;display:inline-block}
+.fonte-tag.f-pgdas{background:#dcfce7;color:#166534}
+.fonte-tag.f-venda{background:#dbeafe;color:#1e40af}
+.fonte-tag.f-markup{background:#fef3c7;color:#92400e}
+.fonte-tag.f-saida{background:#e0e7ff;color:#3730a3}
+.etbl{min-width:860px;border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+.etbl th,.etbl td{padding:9px 11px;border-bottom:1px solid var(--line)}
+.etbl thead th{background:var(--surface2);text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.etbl thead th.l,.etbl td.l{text-align:left}
+.etbl td{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.etbl td.l{font-weight:600;white-space:normal;min-width:170px}
+.etbl .q{color:var(--sub);font-size:11.5px}
+.etbl .eco{color:var(--ok);font-weight:800;font-size:15px}
+.etbl .pct{font-weight:800}
+.etbl tbody tr.emprow:hover td{background:var(--surface2)}
+.etbl .totrow td{border-top:2px solid var(--line);background:var(--surface2);font-weight:700}
+.exp{cursor:pointer;color:var(--brand1);font-weight:700;font-size:12px;background:none;border:0;font-family:inherit}
+.det{display:none;background:var(--surface2)} .det.open{display:table-row}
+.catrow{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.catrow:last-child{border-bottom:0}
+.catrow .cat{font-weight:700}
+.catrow .cf{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-size:11px}
+.pill-rbt{font-size:11px;font-weight:700;color:var(--warn);background:var(--warnbg);padding:2px 8px;border-radius:8px}
+.leg{font-size:12px;color:var(--sub);margin-top:10px}
+.estim-warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#92400e;margin:12px 0}
+</style>
+
+<div class="card">
+  <div class="between" style="margin-bottom:8px;flex-wrap:wrap;gap:10px">
+    <div><h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> Economia Fiscal — Produtos Monofásicos</h2>
+      <p class="desc" style="margin:2px 0 0">Projeção de <b>quanto o cliente pode pagar a menos</b> de PIS/COFINS revendendo produtos monofásicos (Simples Nacional — segregação de receitas). Identificação por <b>NCM</b>. <a href="{{ url_for('ajuda') }}" style="color:var(--brand1)">Entenda</a></p></div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+      <span class="compbadge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Apuração: {{ comp_label }}</span>
+      <div class="modo-tabs">
+        <a href="{{ url_for('fiscal_economia', modo='venda', empresa=empresa_sel, ano=ano, mes=mes, ocultar='1' if ocultar else '', aplicado='1') }}" class="{% if modo=='venda' %}active{% endif %}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 12l3-3 4 4 5-5"/></svg>
+          Pela venda real
+        </a>
+        <a href="{{ url_for('fiscal_economia', modo='estimativa', empresa=empresa_sel, janela=janela, ocultar='1' if ocultar else '', aplicado='1') }}" class="{% if modo=='estimativa' %}active{% endif %}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+          Pela estimativa de compras
+        </a>
+      </div>
+    </div>
+  </div>
+
+  {% if modo == 'estimativa' %}
+  <div class="estim-warn">
+    <b>Estimativa (rolling {{ janela }} meses):</b> % monofásico vem da proporção de NCM monofásicos nas <b>compras reais</b> do cliente (NFs em que ele é destinatário).
+    Receita usada: <span class="fonte-tag f-pgdas">PGDAS importado</span> → <span class="fonte-tag f-venda">próprias vendas em disco</span> → <span class="fonte-tag f-markup">compras × markup 1,5</span>.
+    Use <b>"Pela venda real"</b> se já temos as saídas (autXML) — é mais preciso.
+  </div>
+  {% endif %}
+
+  <form method="get" class="filtros">
+    <input type="hidden" name="aplicado" value="1">
+    <input type="hidden" name="modo" value="{{ modo }}">
+    <div class="fld"><label>Empresa</label>
+      <select name="empresa" style="min-width:190px"><option value="">Todas ({{ empresas|length }})</option>
+        {% for e in empresas %}<option value="{{ e['cnpj'] }}" {% if e['cnpj']==empresa_sel %}selected{% endif %}>{{ e['nome']|title }}</option>{% endfor %}
+      </select>
+    </div>
+    {% if modo == 'venda' %}
+    <div class="fld"><label>Ano</label>
+      <select name="ano"><option value="">Todos</option>{% for a in anos %}<option value="{{a}}" {% if a==ano %}selected{% endif %}>{{a}}</option>{% endfor %}</select>
+    </div>
+    <div class="fld"><label>Mês (apuração)</label>
+      <select name="mes"><option value="">Todos</option>
+        {% for m in ['01','02','03','04','05','06','07','08','09','10','11','12'] %}<option value="{{m}}" {% if m==mes %}selected{% endif %}>{{m}}</option>{% endfor %}
+      </select>
+    </div>
+    {% else %}
+    <div class="fld"><label>Janela (meses)</label>
+      <select name="janela">
+        {% for j in [6,12,18,24] %}<option value="{{j}}" {% if j==janela %}selected{% endif %}>{{j}} meses</option>{% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <label class="chk" style="font-size:12.5px;margin-bottom:9px"><input type="checkbox" name="ocultar" value="1" {% if ocultar %}checked{% endif %} style="width:auto"> ocultar sem benefício</label>
+    <button class="btn btn-primary sm">Aplicar</button>
+    {% if modo=='venda' %}<a href="{{ url_for('fiscal_economia', modo='venda', aplicado='1') }}" class="btn btn-ghost sm">Todas competências</a>
+    {% else %}<a href="{{ url_for('fiscal_economia', modo='estimativa', aplicado='1', janela=janela) }}" class="btn btn-ghost sm">Padrão (12m)</a>{% endif %}
+  </form>
+</div>
+
+<div class="kpis" style="margin-bottom:18px">
+  <div class="kpi" style="--kbg:#e7f8f0;--kfg:#10b981"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4M4 6v12a2 2 0 0 0 2 2h14v-4M18 12a2 2 0 0 0 0 4h4v-4z"/></svg></div><div class="val" style="font-size:19px">R$ {{ tot.economia|brl }}</div><div class="lab">Economia projetada / mês</div></div>
+  <div class="kpi" style="--kbg:#eef0fe;--kfg:#6366f1"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 9l-5 5-3-3-4 4"/></svg></div><div class="val" style="font-size:19px">R$ {{ tot.fat_mono|brl }}</div><div class="lab">{% if modo=='estimativa' %}Receita monofásica (est.){% else %}Faturamento monofásico{% endif %}</div></div>
+  <div class="kpi" style="--kbg:#e0f2fe;--kfg:#0ea5e9"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a10 10 0 1 0 10 10H12z"/><path d="M12 2v10l8.5-5"/></svg></div><div class="val">{{ tot.n_benef }}</div><div class="lab">Empresas com benefício</div></div>
+  <div class="kpi" style="--kbg:#fff7ed;--kfg:#f59e0b"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2 18a2 2 0 0 0 1.7 3h16.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div><div class="val">{{ tot.sem_rbt12 }}</div><div class="lab">Sem RBT12 (falta cadastrar)</div></div>
+</div>
+
+<div class="card">
+  {% if not linhas %}
+  <p class="muted" style="text-align:center;padding:24px">
+    {% if modo == 'estimativa' %}
+    Nenhuma compra real com produto monofásico identificada nos <b>últimos {{ janela }} meses</b>. Verifique se há NFs de fornecedores baixadas em <code>XML/&lt;cnpj&gt;/&lt;comp&gt;/NFe/01_entrada/</code> ou ajuste o filtro.
+    {% else %}
+    Nenhuma venda com produto monofásico em <b>{{ comp_label }}</b> — ou ainda não temos as <b>saídas</b> dessas empresas (dependem de autXML). Mude para <b>"Pela estimativa de compras"</b> ou puxe as saídas no <a href="{{ url_for('dashboard') }}">Painel</a>.
+    {% endif %}
+  </p>
+  {% else %}
+  <div class="tbl-wrap"><table class="etbl">
+    <thead><tr>
+      <th class="l">Empresa</th>
+      {% if modo == 'estimativa' %}
+      <th>Compras ({{ janela }}m)</th>
+      <th>% Monofásico</th>
+      <th>Receita usada</th>
+      <th>Anexo / alíq.</th>
+      <th>Economia / mês</th>
+      {% else %}
+      <th>Faturamento (venda)</th>
+      <th>% Monofásico</th>
+      <th>Fat. monofásico</th>
+      <th>Anexo / alíq.</th>
+      <th>Economia / mês</th>
+      {% endif %}
+      <th></th>
+    </tr></thead>
+    <tbody>
+      {% for r in linhas %}
+      <tr class="emprow">
+        <td class="l">{{ r.nome|title }}<div class="mono muted" style="font-weight:400;font-size:11px">{{ r.cnpj }}</div></td>
+        {% if modo == 'estimativa' %}
+        <td>R$ {{ r.total_comprado|brl }}<div class="q">{{ r.qtd_compras }} NFs · {{ r.janela_meses }} meses</div></td>
+        <td><span class="pct" style="color:{{ 'var(--ok)' if r.pct else 'var(--muted)' }}">{{ r.pct }}%</span></td>
+        <td>R$ {{ r.fat_venda|brl }}
+          {% if r.receita_fonte == 'pgdas' %}<div class="q"><span class="fonte-tag f-pgdas">PGDAS</span> {{ r.receita_periodo }}</div>
+          {% elif r.receita_fonte == 'venda_propria' %}<div class="q"><span class="fonte-tag f-venda">VENDA</span> {{ r.receita_periodo }}</div>
+          {% elif r.receita_fonte == 'saida_real' %}<div class="q"><span class="fonte-tag f-saida">SAÍDA</span> {{ r.receita_periodo }}</div>
+          {% else %}<div class="q"><span class="fonte-tag f-markup">MARKUP</span> {{ r.receita_periodo }}</div>{% endif %}
+        </td>
+        <td>{{ r.anexo }}{% if r.faixa %} · {{ '%.2f'|format(r.ef*100) }}%{% endif %}<div class="q">{% if r.faixa %}faixa {{ r.faixa }} · {% endif %}RBT12 {{ {'pgdas':'PGDAS ✓','pgdas_proporcional':'PGDAS ≈','cadastro':'cadastro','ausente':'não informado'}.get(r.rbt12_fonte, '—') }}</div></td>
+        <td>{% if r.fat_mono <= 0 %}<span class="muted">—</span>{% elif not r.rbt12 %}{% if papel_atual=='admin' %}<a href="{{ url_for('cliente_editar', eid=r.id) }}" class="pill-rbt" title="Cadastre o RBT12 do cliente">informar RBT12</a>{% else %}<span class="pill-rbt">informar RBT12</span>{% endif %}{% else %}<span class="eco">R$ {{ r.economia|brl }}</span>{% if r.ec_max and r.ec_max > r.economia %}<div class="q" title="Se toda a receita fosse revenda monofásica">máx R$ {{ r.ec_max|brl }}</div>{% endif %}{% endif %}</td>
+        {% else %}
+        <td>R$ {{ r.fat_venda|brl }}</td>
+        <td><span class="pct" style="color:{{ 'var(--ok)' if r.pct else 'var(--muted)' }}">{{ r.pct }}%</span></td>
+        <td>R$ {{ r.fat_mono|brl }}<div class="q">{{ r.notas_mono }} NFs</div></td>
+        <td>{{ r.anexo }}{% if r.faixa %} · {{ '%.2f'|format(r.ef*100) }}%{% endif %}<div class="q">{% if r.faixa %}faixa {{ r.faixa }} · {% endif %}RBT12 {{ {'pgdas':'PGDAS ✓','pgdas_proporcional':'PGDAS ≈','cadastro':'cadastro','ausente':'não informado'}.get(r.rbt12_fonte, '—') }}</div></td>
+        <td>{% if r.fat_mono <= 0 %}<span class="muted">—</span>{% elif not r.rbt12 %}{% if papel_atual=='admin' %}<a href="{{ url_for('cliente_editar', eid=r.id) }}" class="pill-rbt" title="Cadastre o RBT12 do cliente">informar RBT12</a>{% else %}<span class="pill-rbt">informar RBT12</span>{% endif %}{% else %}<span class="eco">R$ {{ r.economia|brl }}</span>{% if r.ec_max and r.ec_max > r.economia %}<div class="q" title="Se toda a venda fosse monofásica">máx R$ {{ r.ec_max|brl }}</div>{% endif %}{% endif %}</td>
+        {% endif %}
+        <td>{% if r.por_categoria %}<button type="button" class="exp" onclick="var x=this.closest('tr').nextElementSibling;x.classList.toggle('open');this.textContent=x.classList.contains('open')?'fechar':'detalhar';">detalhar</button>{% endif %}</td>
+      </tr>
+      <tr class="det">
+        <td colspan="7">
+          <div style="font-weight:700;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin:2px 0 4px">Produtos monofásicos por categoria</div>
+          {% for cat, g in (r.por_categoria.items() if r.por_categoria is mapping else [])|default([]) %}
+          <div class="catrow"><span><span class="cat">{{ cat }}</span> {% if g.base_legal %}<span class="muted">({{ g.base_legal }})</span>{% endif %} {% if g.ncms %}<span class="cf">NCM {{ g.ncms|join(', ') }}</span>{% endif %}</span><span><b>R$ {{ g.valor|brl }}</b></span></div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+      <tr class="totrow">
+        <td class="l">TOTAL ({{ linhas|length }})</td>
+        {% if modo == 'estimativa' %}
+        <td>R$ {{ tot.receita|brl }}<div class="q">{{ tot.com_compras }} c/ compras</div></td>
+        <td colspan="2"></td>
+        {% else %}
+        <td>R$ {{ tot.fat_venda|brl }}</td>
+        <td>{{ ((tot.fat_mono/tot.fat_venda*100)|round(1)) if tot.fat_venda else 0 }}%</td>
+        <td>R$ {{ tot.fat_mono|brl }}</td>
+        {% endif %}
+        <td></td>
+        <td><span class="eco">R$ {{ tot.economia|brl }}</span></td>
+        <td></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="leg">
+    {% if modo == 'estimativa' %}
+    <b>Estimativa por compras:</b> a <b>% monofásica</b> vem da proporção de NCM monofásicos nas compras reais (NFs onde o cliente é destinatário, rolling {{ janela }}m).
+    Receita usada: PGDAS importado → venda própria do cliente em disco → compras × markup 1,5.
+    <b>RBT12:</b> derivado automaticamente dos <b>recibos PGDAS-D</b> quando há 12 meses importados
+    (<i>PGDAS ✓</i>); com 6–11 meses é proporcionalizado (<i>PGDAS ≈</i>) apenas se o cadastro estiver vazio;
+    com menos que isso usa o <b>cadastro</b> (não extrapolamos poucos meses, para não distorcer a faixa).
+    {% else %}
+    <b>Pela venda real:</b> identifica os itens de <b>venda</b> cujo <b>NCM</b> é monofásico (Tabela SPED 4.3.10 / Leis 9.718, 10.147, 10.485, 13.097). Economia ≈ faturamento monofásico × <b>alíquota efetiva do Simples</b> (Anexo/RBT12 do cadastro) × <b>15,5%</b> (PIS+COFINS, Anexo I).
+    {% endif %}
+    Base legal: LC 123/2006 art. 18 §4º-A + Resolução CGSN 140/2018.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

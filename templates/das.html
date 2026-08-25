@@ -1,0 +1,21 @@
+{% extends 'base.html' %}
+{% block titulo %}DAS{% endblock %}
+{% block corpo %}
+<div class="card" style="text-align:center;padding:48px 24px">
+  <div style="width:64px;height:64px;border-radius:18px;margin:0 auto 18px;display:grid;place-items:center;color:#fff;background:linear-gradient(135deg,#10b981,#059669)">
+    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7h6M9 11h6M9 15h4"/><path d="M6 2h9l3 3v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/></svg>
+  </div>
+  <h2 style="justify-content:center">Módulo DAS — Cálculo e Emissão</h2>
+  <p class="desc" style="max-width:520px;margin:6px auto 0">
+    Apuração e emissão do <b>DAS</b> (Simples Nacional / MEI). Este módulo faz parte da plataforma —
+    o puxador de NF é outro módulo. Em construção.
+  </p>
+  <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:22px">
+    <span class="tag">Apurar Simples / MEI</span>
+    <span class="tag">Gerar guia DAS</span>
+    <span class="tag">Enviar ao cliente (WhatsApp)</span>
+    <span class="tag">Histórico por competência</span>
+  </div>
+  <p class="muted" style="margin-top:24px">🚧 Em breve. A base de clientes e o motor de jobs já servem este módulo quando ele for construído.</p>
+</div>
+{% endblock %}

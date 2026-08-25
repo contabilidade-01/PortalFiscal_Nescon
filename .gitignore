@@ -1,0 +1,42 @@
+# ============================================================
+# DADOS E SEGREDOS - NUNCA subir no Git (LGPD / seguranca)
+# ============================================================
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+portal_fiscal.db*
+
+# XML de clientes (dados fiscais) e CERTIFICADOS (chave privada!)
+XML/
+Certificados/
+*.pfx
+*.p12
+*.pem
+.cert_key
+
+# Dados persistentes (volume em producao)
+data/
+
+# Logs
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# IDE / temporarios
+.vscode/
+.idea/
+.kilo/
+*.tmp
+*.temp
+
+# Clone aninhado do Cursor (nao versionar)
+portalfiscal_nescon/

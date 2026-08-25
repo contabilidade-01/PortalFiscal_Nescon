@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+{% block titulo %}{{ 'Editar' if e else 'Novo' }} cliente{% endblock %}
+{% block corpo %}
+<style>
+.formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:0 18px}
+.full{grid-column:1/-1}
+.chkrow{display:flex;gap:22px;flex-wrap:wrap;margin-top:14px}
+.chk{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--txt);cursor:pointer}
+.chk input{width:auto;margin:0}
+</style>
+
+<div style="max-width:760px;margin:0 auto">
+  <a href="{{ url_for('clientes') }}" class="muted" style="text-decoration:none;font-size:13px">← voltar para Clientes</a>
+  <div class="card" style="margin-top:12px">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      {{ 'Editar cliente' if e else 'Novo cliente' }}</h2>
+    <p class="desc">Cadastro completo — independe do certificado. O certificado é vinculado à parte (na lista de Clientes).</p>
+
+    <form method="post" action="{{ url_for('cliente_editar', eid=e['id']) if e else url_for('cliente_novo') }}">
+      <div class="formgrid">
+        <div class="full"><label>Nome / Razão social</label><input name="nome" value="{{ e['nome'] if e else '' }}" required></div>
+        <div><label>CNPJ</label>
+          {% if e %}<input value="{{ e['cnpj'] }}" disabled>{% else %}<input name="cnpj" placeholder="somente números" required>{% endif %}
+        </div>
+        <div><label>UF</label><input name="uf" maxlength="2" value="{{ e['uf'] if e else 'SP' }}"></div>
+        <div><label>WhatsApp</label><input name="whatsapp" value="{{ e['whatsapp'] if e else '' }}"></div>
+        <div><label>Responsável</label><input name="responsavel" value="{{ e['responsavel'] if e else '' }}"></div>
+        <div><label>E-mail</label><input name="email" value="{{ e['email'] if e else '' }}"></div>
+        <div><label>Emissor da NF</label><input name="emissor" value="{{ e['emissor'] if e else '' }}" placeholder="Bling, Tiny..."></div>
+        <div><label>Marketplace</label><input name="marketplace" value="{{ e['marketplace'] if e else '' }}" placeholder="Mercado Livre, Shopee..."></div>
+        <div><label>Método de saída</label>
+          <select name="metodo_saida">
+            {% set ms = e['metodo_saida'] if e else 'a_verificar' %}
+            {% for v,l in [('a_verificar','A verificar'),('autXML','autXML'),('conector','Conector'),('origem','Origem/emissor'),('nao_aplica','Não se aplica')] %}
+            <option value="{{ v }}" {{ 'selected' if ms==v }}>{{ l }}</option>{% endfor %}
+          </select>
+        </div>
+        <div><label>Simples — Anexo</label>
+          <select name="simples_anexo">
+            {% set sa = e['simples_anexo'] if (e and e['simples_anexo']) else 'I' %}
+            {% for v,l in [('I','Anexo I — Comércio'),('II','Anexo II — Indústria'),('III','Anexo III — Serviços'),('IV','Anexo IV — Serviços'),('V','Anexo V — Serviços')] %}
+            <option value="{{ v }}" {{ 'selected' if sa==v }}>{{ l }}</option>{% endfor %}
+          </select>
+        </div>
+        <div><label>Simples — RBT12 (receita 12 meses, R$)</label><input name="simples_rbt12" value="{{ (e['simples_rbt12'] or '') if e else '' }}" placeholder="ex: 180000" inputmode="decimal"></div>
+        <div class="full"><label>Observações</label><input name="obs" value="{{ e['obs'] if e else '' }}"></div>
+      </div>
+      <div class="chkrow">
+        <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if (e['puxa_nfe'] if e else 1) }}> Puxa NF-e</label>
+        <label class="chk"><input type="checkbox" name="puxa_nfse" {{ 'checked' if (e['puxa_nfse'] if e else 1) }}> Puxa NFS-e</label>
+        <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if (e['puxa_nfce'] if e else 0) }}> Puxa NFC-e (varejo SP)</label>
+        <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (e['ativo'] if e else 1) }}> Cliente ativo</label>
+      </div>
+
+      {% if e %}
+      <div class="card" style="background:var(--surface2);margin-top:18px;border:1px solid var(--line)">
+        <h3 style="margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)">
+          Forçar NSU inicial (NF-e)
+        </h3>
+        <p class="desc" style="margin:0 0 12px">Use quando o NSU do banco não é confiável (ex: escrituração atrasada, base recriada). A próxima execução de <b>Entradas NF-e</b> começará por este NSU e zera a flag.</p>
+        <form method="post" action="{{ url_for('cliente_forcar_nsu', eid=e['id']) }}" class="row" style="gap:10px;align-items:flex-end">
+          <div>
+            <label>NSU inicial (15 dígitos)</label>
+            <input name="nsu" value="{{ e['nsu_inicial_forcado'] or '000000000000000' }}" maxlength="15" pattern="\d{15}" style="width:170px;font-family:ui-monospace,Consolas,monospace">
+          </div>
+          <label class="chk" style="font-size:13px">
+            <input type="checkbox" name="forcar" value="1" {% if e['forcar_nsu_nfe'] %}checked{% endif %}>
+            Ativar na próxima execução
+          </label>
+          <button class="btn btn-primary sm">Salvar</button>
+          <span class="muted" style="font-size:12px">Atual: ultnsu_nfe = <b>{{ e['ultnsu_nfe'] }}</b></span>
+        </form>
+      </div>
+      {% endif %}
+      <div class="between" style="margin-top:22px">
+        <button class="btn btn-primary">{{ 'Salvar alterações' if e else 'Cadastrar cliente' }}</button>
+        {% if e %}
+        <span class="muted">Certificado: {% if e['senha_ok'] %}<span class="pill on dot">A1 ✓ {{ e['validade'] }}</span>{% else %}<span class="pill off dot">não vinculado</span>{% endif %}</span>
+        {% endif %}
+      </div>
+    </form>
+  </div>
+
+  {% if e %}
+  <div class="card" style="border-color:color-mix(in srgb,var(--err) 30%,var(--line))">
+    <h2 style="color:var(--err)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--err)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg> Excluir cliente</h2>
+    <p class="desc">Remove o cliente da base (não fazemos a parte fiscal). Os XML já baixados permanecem na pasta.</p>
+    <form method="post" action="{{ url_for('cliente_excluir', eid=e['id']) }}" onsubmit="return confirm('Excluir este cliente da base? Esta ação não pode ser desfeita.')">
+      <button class="btn" style="background:var(--err);color:#fff">Excluir da base</button>
+    </form>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

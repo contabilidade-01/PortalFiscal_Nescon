@@ -1,0 +1,11 @@
+flask>=3.0
+werkzeug>=3.0
+requests>=2.31
+# PIN: os PFX A1 da ICP-Brasil vem em BER e a cryptography avisa que um dia pode
+# virar excecao. Se isso acontecer numa atualizacao, o robo para de abrir TODOS os
+# certificados. Versao travada na que esta comprovadamente funcionando (2026-08-07).
+cryptography==46.0.5
+lxml>=5.0
+xmlsec>=1.3.14
+waitress>=3.0
+pdfplumber>=0.11  # Etapa 15: parser do Recibo PGDAS-D

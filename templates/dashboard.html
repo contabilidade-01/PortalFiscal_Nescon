@@ -1,0 +1,138 @@
+{% extends 'base.html' %}
+{% block titulo %}Painel{% endblock %}
+{% block corpo %}
+<style>
+.tabs{display:flex;gap:6px;margin-bottom:20px;border:1px solid var(--line);background:var(--surface);padding:6px;border-radius:14px;width:fit-content;box-shadow:var(--shadow)}
+.tab-btn{border:0;background:transparent;color:var(--sub);font-weight:700;font-size:14px;padding:10px 22px;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;transition:.15s}
+.tab-btn.active{color:#fff;background:linear-gradient(135deg,var(--brand1),var(--brand2))}
+.tab-btn .cnt{font-size:11px;background:var(--surface2);color:var(--sub);padding:1px 8px;border-radius:20px}
+.tab-btn.active .cnt{background:rgba(255,255,255,.25);color:#fff}
+.tabpane{display:none} .tabpane.active{display:block}
+.movbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.mv{display:flex;align-items:center;gap:8px;font-size:13px;padding:10px 14px;border-radius:11px;border:1px solid var(--line);background:var(--surface2);flex:1 1 200px}
+.mv .em{font-size:17px;line-height:1}
+.mv .txt{color:var(--sub)} .mv b{font-size:16px;color:var(--txt);margin-left:auto;font-variant-numeric:tabular-nums}
+.mv.in{border-color:color-mix(in srgb,var(--brand3) 35%,var(--line))}
+.mv.out{border-color:color-mix(in srgb,var(--ok) 35%,var(--line))}
+.mv.mut{opacity:.75}
+.guide{display:flex;align-items:center;gap:16px;flex-wrap:wrap;background:linear-gradient(90deg,color-mix(in srgb,var(--brand1) 10%,transparent),transparent);border:1px solid color-mix(in srgb,var(--brand1) 22%,var(--line));border-radius:14px;padding:12px 16px;margin-bottom:18px}
+.guide .g{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--txt)}
+.guide .g b{display:block;font-size:11px;color:var(--brand1);letter-spacing:.3px}
+.guide .g span{color:var(--sub);font-size:12px}
+.guide .gn{width:24px;height:24px;flex:none;border-radius:8px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:12px;background:linear-gradient(135deg,var(--brand1),var(--brand2))}
+.guide .arrow{color:var(--muted)}
+.guide .help{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--brand1);text-decoration:none;white-space:nowrap}
+.hint-inline{font-size:12px;color:var(--sub);margin:6px 0 0}
+@media(max-width:760px){.guide .arrow{display:none}}
+</style>
+
+<div class="guide">
+  <div class="g"><span class="gn">1</span><div><b>CADASTRAR</b><span>empresa + certificado</span></div></div>
+  <span class="arrow">→</span>
+  <div class="g"><span class="gn">2</span><div><b>PUXAR</b><span>as notas (abaixo)</span></div></div>
+  <span class="arrow">→</span>
+  <div class="g"><span class="gn">3</span><div><b>CONFERIR</b><span>quantidade, valor e numeração</span></div></div>
+  <a class="help" href="{{ url_for('ajuda') }}">Novo por aqui? Abrir a Ajuda →</a>
+</div>
+
+<div class="kpis">
+  <div class="kpi" style="--kbg:#eef0fe;--kfg:#6366f1"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M6 21V7l6-4 6 4v14"/></svg></div><div class="val">{{ kpi.total }}</div><div class="lab">Empresas na base</div></div>
+  <div class="kpi" style="--kbg:#e0f2fe;--kfg:#0ea5e9"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div><div class="val">{{ kpi.nfe }}</div><div class="lab">Puxam NF-e</div></div>
+  <div class="kpi" style="--kbg:#f3e8ff;--kfg:#8b5cf6"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 13H8m8 4H8m2-8H8"/><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg></div><div class="val">{{ kpi.nfse }}</div><div class="lab">Puxam NFS-e</div></div>
+  <div class="kpi" style="--kbg:#dcfce7;--kfg:#15803d"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg></div><div class="val">{{ kpi.nfce }}</div><div class="lab">Puxam NFC-e (SP)</div></div>
+  <div class="kpi" style="--kbg:#e7f8f0;--kfg:#10b981"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></div><div class="val">{{ kpi.com_cert }}</div><div class="lab">Com certificado</div></div>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" data-tab="nfe" onclick="showTab('nfe')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> NF-e <span class="cnt">{{ kpi.docs_nfe }}</span></button>
+  <button class="tab-btn" data-tab="nfse" onclick="showTab('nfse')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 13H8m8 4H8"/><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg> NFS-e <span class="cnt">{{ kpi.docs_nfse }}</span></button>
+  <button class="tab-btn" data-tab="nfce" onclick="showTab('nfce')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg> NFC-e <span class="cnt">{{ kpi.docs_nfce }}</span></button>
+</div>
+
+<!-- ABA NFe -->
+<div class="tabpane active" id="pane-nfe">
+  <div class="card">
+    <div class="between">
+      <div><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg> NF-e · Distribuição SEFAZ</h2><p class="desc" style="margin:0"><b>Entradas</b> = compras que a empresa recebeu · <b>Saídas</b> = vendas que a empresa emitiu (via escritório/autXML). Busca incremental por NSU (continua de onde parou).</p></div>
+      <div class="row">
+        <form method="post" action="{{ url_for('run_nfe_entradas') }}"><button class="btn btn-success" title="Baixa as NF-e que a empresa recebeu de fornecedores">Puxar entradas (compras)</button></form>
+        <form method="post" action="{{ url_for('run_nfe_saidas') }}"><button class="btn btn-primary" title="Baixa as NF-e que a empresa emitiu para clientes" {{ '' if office else 'disabled' }}>Puxar saídas (vendas)</button></form>
+      </div>
+    </div>
+    <div class="movbar">
+      <div class="mv in"><span class="em">📥</span><span class="txt">Entradas · compras</span><b>{{ mov.nfe_entrada }}</b></div>
+      <div class="mv out"><span class="em">📤</span><span class="txt">Saídas · vendas</span><b>{{ mov.nfe_saida }}</b></div>
+      {% if mov.nfe_resumo or mov.nfe_eventos %}<div class="mv mut"><span class="em">🗂️</span><span class="txt">Resumos/eventos</span><b>{{ mov.nfe_resumo + mov.nfe_eventos }}</b></div>{% endif %}
+    </div>
+    {% if office and mov.nfe_saida == 0 %}<div class="status-strip" style="background:var(--surface2)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg> <b>Saídas zeradas:</b>&nbsp;as vendas por NF-e só chegam se o cliente autorizou o <b>CNPJ do escritório como autXML</b> na emissão. Sem isso a SEFAZ retorna vazio (às vezes <code>cStat 656</code> = consumo indevido — a busca entra em espera). <a href="{{ url_for('ajuda') }}">Ver Ajuda</a>.</div>{% endif %}
+    {% if status_nfe %}<div class="status-strip"><span class="spin"></span> {{ status_nfe }}</div>{% endif %}
+    {% if not office %}<div class="status-strip" style="background:var(--surface2)"><b>Saídas:</b>&nbsp;configure o certificado do escritório para habilitar.</div>
+    <form method="post" action="{{ url_for('cert_office') }}" enctype="multipart/form-data" style="margin-top:12px">
+      <div class="row"><div><label>Cert do escritório (.pfx)</label><input type="file" name="ocert" accept=".pfx,.p12"></div>
+      <div><label>ou caminho</label><input name="opath" placeholder="C:\...NESCON...pfx"></div>
+      <div><label>Senha</label><input name="osenha" type="text"></div>
+      <button class="btn btn-ghost">Salvar escritório</button></div>
+    </form>{% endif %}
+  </div>
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg> Últimas execuções NF-e</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>Quando</th><th>Tipo</th><th>Empresa</th><th>Docs</th><th>Parada</th></tr></thead><tbody>
+      {% for x in exec_nfe %}<tr><td class="muted">{{ x['quando'] }}</td><td><span class="tag ent">{{ x['tipo'].replace('nfe_','') }}</span></td><td>{{ x['nome']|title }}</td><td><b>{{ x['docs'] }}</b></td><td><span class="tag">{{ x['parada'] }}</span></td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">Sem execuções ainda.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+
+<!-- ABA NFSe -->
+<div class="tabpane" id="pane-nfse">
+  <div class="card">
+    <div class="between">
+      <div><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand2)" stroke-width="2"><path d="M16 13H8m8 4H8"/><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg> NFS-e · Portal Nacional (ADN)</h2><p class="desc" style="margin:0">Notas de serviço: <b>tomados</b> = serviços que a empresa contratou · <b>prestados</b> = serviços que a empresa prestou. Varredura por NSU em <code>adn.nfse.gov.br</code> (só municípios que aderiram ao padrão nacional).</p></div>
+      <form method="post" action="{{ url_for('run_nfse') }}"><button class="btn btn-primary" title="Baixa NFS-e tomadas e prestadas">Puxar NFS-e</button></form>
+    </div>
+    <div class="movbar">
+      <div class="mv in"><span class="em">🛒</span><span class="txt">Tomados · serviços contratados</span><b>{{ mov.nfse_tomado }}</b></div>
+      <div class="mv out"><span class="em">🧾</span><span class="txt">Prestados · serviços prestados</span><b>{{ mov.nfse_prestado }}</b></div>
+    </div>
+    {% if status_nfse %}<div class="status-strip"><span class="spin"></span> {{ status_nfse }}</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand2)" stroke-width="2"><path d="M16 13H8m8 4H8"/><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/></svg> Últimas execuções NFS-e</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>Quando</th><th>Empresa</th><th>Docs</th><th>Parada</th></tr></thead><tbody>
+      {% for x in exec_nfse %}<tr><td class="muted">{{ x['quando'] }}</td><td>{{ x['nome']|title }}</td><td><b>{{ x['docs'] }}</b></td><td><span class="tag">{{ x['parada'] }}</span></td></tr>
+      {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:24px">Sem execuções ainda — a NFS-e nacional só cobre municípios que aderiram ao padrão.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+
+<!-- ABA NFCe -->
+<div class="tabpane" id="pane-nfce">
+  <div class="card">
+    <div class="between">
+      <div><h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg> NFC-e · SEFAZ-SP (modelo 65)</h2><p class="desc" style="margin:0">Vendas de varejo/consumidor. Lista as chaves por período e baixa de <b>todas</b> as empresas marcadas. Data e limite em <a href="{{ url_for('configuracoes') }}">Configurações</a>.</p></div>
+      <form method="post" action="{{ url_for('run_nfce') }}" onsubmit="return confirm('Listar e baixar NFC-e de TODAS as empresas marcadas (respeitando o limite)?');"><button class="btn btn-success">Listar e baixar NFC-e</button></form>
+    </div>
+    <div class="movbar">
+      <div class="mv out"><span class="em">🛍️</span><span class="txt">Vendas no varejo · modelo 65 (só saída)</span><b>{{ mov.nfce_venda }}</b></div>
+    </div>
+    {% if status_nfce %}<div class="status-strip"><span class="spin"></span> {{ status_nfce }}</div>{% endif %}
+    {% if kpi.nfce == 0 %}<div class="status-strip" style="background:var(--surface2)">Nenhuma empresa com <b>Puxa NFC-e</b> marcada. Ative em <a href="{{ url_for('clientes') }}">Clientes → editar</a> (empresas SP de varejo, com certificado).</div>{% endif %}
+  </div>
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#15803d" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/></svg> Últimas execuções NFC-e</h2>
+    <div class="tbl-wrap"><table><thead><tr><th>Quando</th><th>Empresa</th><th>Docs</th><th>Parada</th><th>Detalhe</th></tr></thead><tbody>
+      {% for x in exec_nfce %}<tr><td class="muted">{{ x['quando'] }}</td><td>{{ x['nome']|title }}</td><td><b>{{ x['docs'] }}</b></td><td><span class="tag">{{ x['parada'] }}</span></td><td class="muted">{{ x['detalhe'] }}</td></tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">Sem execuções ainda.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </div>
+</div>
+
+<script>
+function showTab(t){
+  document.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('active',p.id==='pane-'+t)});
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===t)});
+  localStorage.setItem('aba', t);
+}
+showTab(localStorage.getItem('aba')||'nfe');
+</script>
+{% endblock %}

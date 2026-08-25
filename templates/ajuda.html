@@ -1,0 +1,90 @@
+{% extends 'base.html' %}
+{% block titulo %}Ajuda{% endblock %}
+{% block corpo %}
+<style>
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+.step{position:relative;background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:16px 16px 14px}
+.step .n{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;color:#fff;font-weight:800;font-size:14px;background:linear-gradient(135deg,var(--brand1),var(--brand2));margin-bottom:10px}
+.step h4{margin:0 0 4px;font-size:14px}
+.step p{margin:0;font-size:13px;color:var(--sub);line-height:1.45}
+.step a{color:var(--brand1);font-weight:600;text-decoration:none}
+.gloss{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.term{border:1px solid var(--line);border-radius:12px;padding:13px 15px;background:var(--surface)}
+.term b{display:block;font-size:13.5px;margin-bottom:3px}
+.term .tag{margin-bottom:6px}
+.term p{margin:0;font-size:12.8px;color:var(--sub);line-height:1.45}
+.legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.legend .li{display:flex;gap:8px;align-items:flex-start;font-size:13px;background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 12px;flex:1 1 260px}
+.legend .li .em{font-size:18px;line-height:1}
+.legend .li b{display:block}
+.legend .li span{color:var(--sub);font-size:12.5px}
+.screens{width:100%;border-collapse:separate;border-spacing:0 0}
+.screens td{padding:9px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
+.screens td:first-child{white-space:nowrap;font-weight:700}
+.screens a{color:var(--brand1);text-decoration:none;font-weight:700}
+</style>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg> Como usar o Portal — em 4 passos</h2>
+  <p class="desc">Guia rápido para quem está começando. O objetivo do sistema é <b>baixar automaticamente as notas fiscais dos clientes na SEFAZ/Prefeitura</b> e ajudar a <b>conferir</b> tudo antes da apuração.</p>
+  <div class="steps">
+    <div class="step"><div class="n">1</div><h4>Cadastrar e conferir o certificado</h4><p>Cada empresa precisa de um <b>certificado digital A1</b> (.pfx) válido — é ele que autoriza baixar as notas. Veja em <a href="{{ url_for('clientes') }}">Clientes</a> e <a href="{{ url_for('certificados') }}">Certificados</a>.</p></div>
+    <div class="step"><div class="n">2</div><h4>Puxar as notas</h4><p>No <a href="{{ url_for('dashboard') }}">Painel</a> você dispara a busca (Entradas, Saídas, NFS-e, NFC-e). Roda em segundo plano — pode navegar/sair que continua. Acompanhe em <a href="{{ url_for('execucoes') }}">Execuções</a>.</p></div>
+    <div class="step"><div class="n">3</div><h4>Conferir e auditar</h4><p>Em <a href="{{ url_for('fiscal_conferencia') }}">Conferência</a> você vê <b>quantidade e valor</b> por mês (para a tributação). Em <a href="{{ url_for('fiscal_auditoria') }}">Auditoria</a> o sistema aponta se <b>faltou algum número</b> na sequência das notas emitidas.</p></div>
+    <div class="step"><div class="n">4</div><h4>Baixar os XMLs</h4><p>Em <a href="{{ url_for('downloads') }}">Downloads</a> você baixa os arquivos XML em ZIP, filtrando por empresa, mês e tipo de nota.</p></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg> As 4 palavras que mais confundem</h2>
+  <p class="desc">Sempre pense do ponto de vista <b>da empresa cliente</b>:</p>
+  <div class="legend">
+    <div class="li"><span class="em">📥</span><div><b>Entrada = Compra</b><span>NF-e que a empresa <b>recebeu</b> de um fornecedor. Ela é a compradora.</span></div></div>
+    <div class="li"><span class="em">📤</span><div><b>Saída = Venda</b><span>NF-e que a empresa <b>emitiu</b> para um cliente. Ela é a vendedora.</span></div></div>
+    <div class="li"><span class="em">🛒</span><div><b>Tomado = Serviço contratado</b><span>NFS-e de um serviço que a empresa <b>contratou</b> de terceiros. Ela é a tomadora.</span></div></div>
+    <div class="li"><span class="em">🧾</span><div><b>Prestado = Serviço prestado</b><span>NFS-e de um serviço que a <b>própria empresa prestou</b>. Ela é a prestadora.</span></div></div>
+  </div>
+  <p class="desc" style="margin-top:12px"><b>Regra de ouro da apuração:</b> o que a empresa <b>emitiu/prestou/vendeu</b> (saídas, prestados, NFC-e) é o que costuma ser <b>tributado</b>. Entradas e tomados servem para créditos e conferência.</p>
+</div>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg> Glossário</h2>
+  <div class="gloss">
+    <div class="term"><span class="tag" style="background:#e0f2fe;color:#0369a1">NF-e · modelo 55</span><b>Nota Fiscal Eletrônica</b><p>Nota de produto entre empresas e no e-commerce (marketplaces).</p></div>
+    <div class="term"><span class="tag" style="background:#dcfce7;color:#15803d">NFC-e · modelo 65</span><b>Nota do varejo</b><p>Venda no balcão ao consumidor final (o "cupom fiscal" eletrônico).</p></div>
+    <div class="term"><span class="tag" style="background:#f3e8ff;color:#7c3aed">NFS-e</span><b>Nota de Serviço</b><p>Emitida pela Prefeitura para serviços prestados/contratados.</p></div>
+    <div class="term"><b>Competência</b><p>O mês de referência da apuração, no formato <code>AAAA-MM</code> (ex.: 2026-07 = julho/2026).</p></div>
+    <div class="term"><b>Certificado A1 (.pfx)</b><p>Arquivo com senha que identifica a empresa na SEFAZ. Sem ele o sistema não consegue baixar as notas.</p></div>
+    <div class="term"><b>NSU</b><p>Numeração sequencial da SEFAZ. O sistema guarda o último NSU e continua "de onde parou" — assim não baixa nota repetida.</p></div>
+    <div class="term"><b>cStat</b><p>Código de status da nota. <b>100</b> = autorizada; <b>110</b> = cancelada; <b>101</b> = consulta OK.</p></div>
+    <div class="term"><b>Série e nNF</b><p>Identificam a nota emitida. A Auditoria confere se algum <b>nNF</b> ficou faltando na sequência.</p></div>
+    <div class="term"><b>CFOP</b><p>Código de 4 dígitos em cada item da nota que diz a <b>natureza</b> da operação. Ex.: 5102 = venda; 6902 = retorno; 5910 = brinde/bonificação. A tela <b>Faturamento</b> usa o CFOP para separar o que é base de tributação do que é remessa/brinde.</p></div>
+    <div class="term"><b>NCM</b><p>Código de 8 dígitos que identifica o <b>produto</b>. É por ele que a tela <b>Economia</b> descobre se um item é monofásico.</p></div>
+    <div class="term"><span class="tag" style="background:#dcfce7;color:#15803d">benefício</span><b>Produto monofásico</b><p>Produto cujo PIS/COFINS é pago só na indústria/importação (combustíveis, remédios, autopeças, perfumaria, bebidas, pneus). Na <b>revenda</b>, a alíquota é <b>zero</b>.</p></div>
+    <div class="term"><b>Segregação de receitas</b><p>No Simples, a empresa <b>separa</b> a receita de produtos monofásicos e <b>não paga PIS/COFINS</b> sobre ela (LC 123 art. 18 §4º-A + Resolução CGSN 140/2018). É a economia que a tela projeta.</p></div>
+    <div class="term"><b>RBT12 e Anexo</b><p><b>RBT12</b> = receita bruta dos últimos 12 meses (define a faixa/alíquota do Simples). <b>Anexo</b> = tabela do Simples (I = comércio, II = indústria). Cadastre-os no cliente para a tela calcular a economia em R$.</p></div>
+    <div class="term"><b>Extrato do Simples (PGDAS-D)</b><p>PDF gerado pelo portal do Simples Nacional após cada declaração mensal. Tem <b>CNPJ</b>, <b>período</b>, <b>receita bruta</b>, <b>anexo</b>, <b>RBT12</b> e <b>DAS devido</b>. Importe em <b>Admin → Recibo PGDAS-D</b> para alimentar a <b>Mensuração 3-fontes</b> com a receita <b>oficial declarada</b>.</p></div>
+    <div class="term"><b>Mensuração 3-fontes</b><p>Cruza 3 sinais para validar a economia monofásica real: <b>vendas</b> (NF/NFCe saída) × <b>compras</b> (rolling 12m, % monofásica do que o cliente compra) × <b>PGDAS</b> (receita declarada). <span style="background:#dcfce7;padding:2px 7px;border-radius:8px;font-weight:700">verde</span> = vendas confirmam; <span style="background:#fef3c7;padding:2px 7px;border-radius:8px;font-weight:700">amarelo</span> = extrapolação; <span style="background:#fee2e2;padding:2px 7px;border-radius:8px;font-weight:700">vermelho</span> = viés ou sem fonte.</p></div>
+    <div class="term"><b>ICMS-ST (Substituição Tributária)</b><p>Mecanismo em que um <b>substituto</b> (indústria/atacadista) recolhe o ICMS de toda a cadeia na origem. <b>Quem recolhe ICMS-ST:</b> a indústria (o substituto). <b>Quem paga o ICMS-ST:</b> o consumidor final, embutido no preço. <b>Revendedor do Simples (substituído):</b> a receita com ST <b>sai da base do DAS</b> (LC 123 art. 13 §1º XIII "a" + Res CGSN 140 art. 25 §8º II) — o ICMS próprio deixa de incidir sobre ela. <b>O revendedor não recolhe ICMS-ST por fora</b>; quem recolhe é a indústria via GIA-ST estadual. Detectado por <b>CST</b> 10/30/60/70/90 (regime normal) ou <b>CSOSN</b> 201/202/500/900 (Simples). Veja em <b>Análises → ICMS-ST (segregação)</b>.</p></div>
+    <div class="term"><b>CST vs CSOSN</b><p><b>CST</b> = Código de Situação Tributária do ICMS (regime normal, 2 dígitos). <b>CSOSN</b> = Código de Situação da Operação no Simples Nacional (3 dígitos). Empresas do Simples usam CSOSN em vez de CST nas NFs. A tela ICMS-ST reconhece ambos.</p></div>
+    <div class="term"><b>Cancelada</b><p>Nota que foi anulada. <b>Não</b> entra no valor tributado, mas o número dela continua "reservado" na sequência.</p></div>
+    <div class="term"><b>Ciência (evento 210210)</b><p>Manifestação de que a empresa "tomou ciência" de uma NF-e de entrada. O sistema faz automaticamente e guarda o protocolo.</p></div>
+    <div class="term"><b>Protocolo (nProt)</b><p>Comprovante que a SEFAZ devolve ao registrar um evento (ex.: a Ciência). Fica em <a href="{{ url_for('protocolos') }}" style="color:var(--brand1)">Protocolos</a>.</p></div>
+    <div class="term"><b>autXML</b><p>CNPJ autorizado a baixar o XML de uma nota. É como o escritório puxa as <b>saídas</b> dos clientes.</p></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> O que cada tela faz</h2>
+  <table class="screens">
+    <tr><td><a href="{{ url_for('dashboard') }}">Painel</a></td><td>Visão geral + botões para <b>puxar</b> as notas (Entradas, Saídas, NFS-e, NFC-e).</td></tr>
+    <tr><td><a href="{{ url_for('clientes') }}">Clientes</a></td><td>Base única de empresas. Marque quais notas cada uma puxa e o método de saída.</td></tr>
+    <tr><td><a href="{{ url_for('certificados') }}">Certificados</a></td><td>Vincular/checar os certificados A1 (validade, empresas sem certificado).</td></tr>
+    <tr><td><a href="{{ url_for('downloads') }}">Downloads</a></td><td>Baixar os XMLs em ZIP, filtrando por empresa, mês e tipo.</td></tr>
+    <tr><td><a href="{{ url_for('fiscal_conferencia') }}">Conferência</a></td><td><b>Quantidade e valor</b> das notas por mês — base para a tributação.</td></tr>
+    <tr><td><a href="{{ url_for('fiscal_auditoria') }}">Auditoria</a></td><td>Aponta <b>buracos na numeração</b> das notas emitidas (algo que faltou baixar).</td></tr>
+    <tr><td><a href="{{ url_for('execucoes') }}">Execuções</a></td><td>Fila e histórico das buscas; dá para disparar uma nova e ver o período de cada tipo.</td></tr>
+    <tr><td><a href="{{ url_for('configuracoes') }}">Configurações</a></td><td>Data inicial e limite da busca de NFC-e (varejo, SP).</td></tr>
+  </table>
+</div>
+{% endblock %}

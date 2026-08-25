@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block titulo %}Configurações{% endblock %}
+{% block corpo %}
+<style>
+.datebox{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+.datebox .fld{flex:0 0 auto}
+.datebox .fld.ano input{width:96px} .datebox .fld.mes input,.datebox .fld.dia input{width:70px}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+.flow{display:flex;flex-wrap:wrap;gap:10px;margin-top:6px}
+.flow .step{flex:1 1 200px;background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.flow .step b{display:block;font-size:12px;color:var(--brand1);letter-spacing:.4px}
+.flow .step span{font-size:13px;color:var(--sub)}
+</style>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Configurações — NFC-e (SP)</h2>
+  <p class="desc">Parâmetros da busca de NFC-e (modelo 65 — vendas de varejo/consumidor) na SEFAZ-SP.</p>
+
+  <form method="post" action="{{ url_for('configuracoes') }}">
+    <h3>Data inicial da busca</h3>
+    <p class="hint">Mantenha o formato do sistema (ANO · MÊS · DIA). Altere somente o ano, mês e o dia. A busca vai desta data até hoje.</p>
+    <div class="datebox">
+      <div class="fld ano"><label>Ano</label><input name="ano" value="{{ ano }}" inputmode="numeric" maxlength="4" placeholder="AAAA"></div>
+      <div class="fld mes"><label>Mês</label><input name="mes" value="{{ mes }}" inputmode="numeric" maxlength="2" placeholder="MM"></div>
+      <div class="fld dia"><label>Dia</label><input name="dia" value="{{ dia }}" inputmode="numeric" maxlength="2" placeholder="DD"></div>
+    </div>
+
+    <h3>Limite de XMLs por rodada (só NFC-e)</h3>
+    <p class="hint">O sistema baixa no máximo esta quantidade de XMLs de NFC-e por execução (padrão 500). Aumente com cautela para evitar bloqueios da SEFAZ.</p>
+    <div style="max-width:180px"><label>Limite</label><input name="limite" value="{{ limite }}" inputmode="numeric" maxlength="6"></div>
+    <div class="status-strip" style="background:var(--surface2);margin-top:12px">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      <span><b>Passou de 500 num mês?</b> Sem problema: cada rodada baixa até o limite e <b>pula o que já baixou</b>. Se a execução terminar com a parada <code>limite</code>, é só <b>clicar em "Listar e baixar NFC-e" de novo</b> que ela continua de onde parou, até baixar tudo. Isso é <b>exclusivo da NFC-e</b> (varejo gera muitas notas). NF-e e NFS-e usam busca incremental por NSU e não precisam desse teto.</span>
+    </div>
+
+    <div class="row" style="margin-top:18px">
+      <button class="btn btn-primary" type="submit"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg> Salvar configurações</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Baixar NFC-e</h2>
+  <p class="desc">Fluxo: <b>cadastrar empresas</b> (CNPJ sem traços/pontos, UF = SP, com certificado) → <b>listar chaves</b> de todas → <b>baixar os XMLs</b> de todas. Usa a data e o limite configurados acima.</p>
+  <div class="flow">
+    <div class="step"><b>1 · CADASTRAR</b><span>Empresas SP com certificado e a opção "Puxar NFC-e" marcada.</span></div>
+    <div class="step"><b>2 · LISTAR</b><span>Lista as chaves emitidas no período (por data), de todas as empresas.</span></div>
+    <div class="step"><b>3 · BAIXAR</b><span>Baixa os XMLs (modelo 65) na competência de cada nota.</span></div>
+  </div>
+  <form method="post" action="{{ url_for('run_nfce') }}" style="margin-top:16px">
+    <button class="btn btn-success" type="submit" onclick="return confirm('Listar e baixar NFC-e de TODAS as empresas marcadas (respeitando o limite)?');"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg> Listar e baixar NFC-e (todas)</button>
+  </form>
+  <p class="hint" style="margin-top:12px">Acompanhe o andamento pela barra de status ao vivo (topo/rodapé) e em <a href="{{ url_for('execucoes') }}">Execuções</a>. Antes de rodar em massa, valide numa empresa que faz esse tipo de venda (ex.: Sandra Isidio).</p>
+</div>
+{% endblock %}

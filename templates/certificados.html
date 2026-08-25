@@ -1,0 +1,111 @@
+{% extends 'base.html' %}
+{% block titulo %}Certificados{% endblock %}
+{% block corpo %}
+<style>
+.tabs{display:flex;gap:6px;margin-bottom:18px;border:1px solid var(--line);background:var(--surface);padding:6px;border-radius:14px;width:fit-content;box-shadow:var(--shadow)}
+.tab-btn{border:0;background:transparent;color:var(--sub);font-weight:700;font-size:14px;padding:10px 20px;border-radius:10px;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:8px;transition:.15s}
+.tab-btn.active{color:#fff;background:linear-gradient(135deg,var(--brand1),var(--brand2))}
+.tab-btn .cnt{font-size:11px;background:var(--surface2);color:var(--sub);padding:1px 8px;border-radius:20px}
+.tab-btn.active .cnt{background:rgba(255,255,255,.25);color:#fff}
+.tabpane{display:none} .tabpane.active{display:block}
+.vbadge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px}
+.vbadge.ok{background:var(--okbg);color:var(--ok)} .vbadge.vencido{background:var(--errbg);color:var(--err)}
+.vbadge.vencendo{background:#fef3e0;color:#9a6400}
+:root[data-theme="dark"] .vbadge.vencendo{background:#3a2a10;color:#f5c66b}
+</style>
+
+<div class="kpis">
+  <div class="kpi" style="--kbg:#e7f8f0;--kfg:#10b981"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg></div><div class="val">{{ kpi.com }}</div><div class="lab">Com certificado</div></div>
+  <div class="kpi" style="--kbg:#fdecec;--kfg:#ef4444"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></div><div class="val">{{ kpi.sem_ativas }}</div><div class="lab">Ativas sem certificado</div></div>
+  <div class="kpi" style="--kbg:#fdecec;--kfg:#ef4444"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><div class="val">{{ kpi.venc }}</div><div class="lab">Vencidos</div></div>
+  <div class="kpi" style="--kbg:#fef3e0;--kfg:#f59e0b"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg></div><div class="val">{{ kpi.vencendo }}</div><div class="lab">Vencendo (30 dias)</div></div>
+</div>
+
+<!-- Controles de vinculo (a parte da base de clientes) -->
+<div class="grid">
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg> Vincular (upload)</h2>
+    <p class="desc">Envie o .pfx + senha. Casa com a empresa pelo CNPJ do certificado.</p>
+    <form method="post" action="{{ url_for('cert_upload') }}" enctype="multipart/form-data">
+      <label>Certificado (.pfx / .p12)</label><input type="file" name="cert" accept=".pfx,.p12">
+      <label>Senha</label><input name="senha" type="text">
+      <button class="btn btn-primary" style="margin-top:14px">Vincular</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Vincular em lote (pasta)</h2>
+    <p class="desc">Varre a pasta e casa cada .pfx (senha do nome) com a empresa pelo CNPJ.</p>
+    <form method="post" action="{{ url_for('cert_scan') }}">
+      <label>Caminho da pasta</label><input name="pasta" placeholder="C:\...\CERTIFICADO DIGITAL\Clientes">
+      <button class="btn btn-ghost" style="margin-top:14px">Varrer e vincular</button>
+    </form>
+  </div>
+  <div class="card">
+    <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14"/></svg> Cert do escritório <span class="tag sai">saídas</span></h2>
+    <p class="desc">Puxa as vendas via autXML. {% if office %}<b style="color:var(--ok)">Configurado ({{ office }}).</b>{% endif %}</p>
+    <form method="post" action="{{ url_for('cert_office') }}" enctype="multipart/form-data">
+      <label>Cert do escritório (.pfx) ou caminho</label><input type="file" name="ocert" accept=".pfx,.p12">
+      <input name="opath" placeholder="ou C:\...NESCON...pfx" style="margin-top:6px">
+      <label>Senha</label><input name="osenha" type="text">
+      <button class="btn btn-primary" style="margin-top:14px">Salvar escritório</button>
+    </form>
+  </div>
+</div>
+
+<!-- Abas Com / Sem -->
+<div class="tabs">
+  <button class="tab-btn active" data-tab="com" onclick="showTab('com')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="9"/></svg> Com certificado <span class="cnt">{{ kpi.com }}</span></button>
+  <button class="tab-btn" data-tab="sem" onclick="showTab('sem')"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg> Sem certificado <span class="cnt">{{ kpi.sem }}</span></button>
+</div>
+
+<div class="tabpane active" id="pane-com">
+  <div class="card">
+    <div class="tbl-wrap"><table style="min-width:620px">
+      <thead><tr><th>Empresa</th><th>CNPJ</th><th>UF</th><th>Validade</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for x in com %}
+      <tr>
+        <td class="empresa-nome">{{ x.e['nome']|title }}</td>
+        <td class="mono">{{ x.e['cnpj'] }}</td>
+        <td>{{ x.e['uf'] }}</td>
+        <td class="muted">{{ x.e['validade'] }}</td>
+        <td>
+          {% if x.st=='vencido' %}<span class="vbadge vencido">vencido</span>
+          {% elif x.st=='vencendo' %}<span class="vbadge vencendo">vence em {{ x.dias }}d</span>
+          {% else %}<span class="vbadge ok">ok{% if x.dias %} · {{ x.dias }}d{% endif %}</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:26px">Nenhum certificado vinculado ainda.</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</div>
+
+<div class="tabpane" id="pane-sem">
+  <div class="card">
+    <p class="desc" style="margin-top:0">Empresas da base sem certificado vinculado. Use os controles acima para vincular (upload ou pasta).</p>
+    <div class="tbl-wrap"><table style="min-width:560px">
+      <thead><tr><th>Empresa</th><th>CNPJ</th><th>Ativo</th><th>Puxadores</th></tr></thead>
+      <tbody>
+      {% for e in sem %}
+      <tr>
+        <td class="empresa-nome">{{ e['nome']|title }}</td>
+        <td class="mono">{{ e['cnpj'] }}</td>
+        <td>{% if e['ativo'] %}<span class="pill on dot">ativa</span>{% else %}<span class="pill off dot">inativa</span>{% endif %}</td>
+        <td>{% if e['puxa_nfe'] %}<span class="tag ent">NF-e</span>{% endif %} {% if e['puxa_nfse'] %}<span class="tag sai">NFS-e</span>{% endif %}</td>
+      </tr>
+      {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:26px">Todas as empresas têm certificado. 🎉</td></tr>{% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+function showTab(t){
+  document.querySelectorAll('.tabpane').forEach(function(p){p.classList.toggle('active',p.id==='pane-'+t)});
+  document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.toggle('active',b.dataset.tab===t)});
+  localStorage.setItem('abaCert', t);
+}
+showTab(localStorage.getItem('abaCert')||'com');
+</script>
+{% endblock %}

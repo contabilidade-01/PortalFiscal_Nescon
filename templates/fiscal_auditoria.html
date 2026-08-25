@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% block titulo %}Auditoria de Numeração{% endblock %}
+{% block corpo %}
+<style>
+.filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.filtros .fld{display:flex;flex-direction:column;gap:4px}
+.filtros label{margin:0}
+.filtros input,.filtros select{width:auto;padding:9px 11px;font-size:13px}
+.compbadge{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--brand1);background:color-mix(in srgb,var(--brand1) 10%,transparent);border:1px solid color-mix(in srgb,var(--brand1) 25%,var(--line));padding:6px 12px;border-radius:20px}
+.subpill{font-size:11px;font-weight:700;padding:2px 8px;border-radius:10px}
+.subpill.NFe{background:#e0f2fe;color:#0369a1}.subpill.NFCe{background:#dcfce7;color:#15803d}.subpill.NFSe{background:#f3e8ff;color:#7c3aed}
+:root[data-theme="dark"] .subpill.NFe{background:#0c3049;color:#7dd3fc}
+:root[data-theme="dark"] .subpill.NFCe{background:#0e2a1c;color:#86efac}
+:root[data-theme="dark"] .subpill.NFSe{background:#2a1a45;color:#c4b5fd}
+.cell-num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.buracos{display:inline-block;font-family:ui-monospace,Consolas,monospace;font-size:11px;color:var(--err);background:var(--errbg);padding:1px 6px;border-radius:6px;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.buracos.zero{color:var(--ok);background:var(--okbg)}
+.tbl-aud{min-width:820px;border-collapse:collapse;width:100%}
+.tbl-aud th,.tbl-aud td{padding:7px 10px;border-bottom:1px solid var(--line)}
+.tbl-aud th{background:var(--surface2);text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.emp-card{border:1px solid var(--line);border-radius:14px;margin-bottom:14px;overflow:hidden}
+.emp-card.bad{border-color:color-mix(in srgb,var(--err) 40%,var(--line))}
+.emp-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 16px;background:var(--surface2);cursor:pointer}
+.emp-bar h3{margin:0;font-size:14.5px}
+.emp-bar .badge{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:20px}
+.badge.ok{background:var(--okbg);color:var(--ok)} .badge.bad{background:var(--errbg);color:var(--err)}
+.emp-bar .chev{margin-left:auto;color:var(--muted);transition:.2s}
+.emp-body{padding:6px 12px 12px;display:none}
+.emp-card.open .emp-body{display:block}
+.emp-card.open .chev{transform:rotate(180deg)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 4px}
+.chip-emp{display:inline-flex;gap:7px;align-items:center;font-size:12.5px;font-weight:600;padding:6px 12px;border-radius:20px;background:var(--errbg);color:var(--err);text-decoration:none;border:1px solid color-mix(in srgb,var(--err) 30%,transparent)}
+.chip-emp .n{background:var(--err);color:#fff;border-radius:20px;padding:0 7px;font-size:11px}
+.note{font-size:12px;color:var(--sub)}
+</style>
+
+<div class="card">
+  <div class="between" style="margin-bottom:6px">
+    <div><h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg> Auditoria de Numeração</h2>
+      <p class="desc" style="margin:2px 0 0">Confere se <b>faltou algum número</b> na sequência das notas <b>emitidas</b> pela empresa (saídas, vendas, prestados). <a href="{{ url_for('ajuda') }}" style="color:var(--brand1)">O que é série/nNF?</a></p></div>
+    <span class="compbadge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Apuração: {{ comp_label }}</span>
+  </div>
+  <form method="get" class="filtros">
+    <input type="hidden" name="aplicado" value="1">
+    <div class="fld"><label>Empresa</label>
+      <select name="empresa" style="min-width:200px"><option value="">Todas ({{ empresas|length }})</option>
+        {% for e in empresas %}<option value="{{ e['cnpj'] }}" {% if e['cnpj']==empresa_sel %}selected{% endif %}>{{ e['nome']|title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld"><label>Ano</label>
+      <select name="ano"><option value="">Todos</option>{% for a in anos %}<option value="{{a}}" {% if a==ano %}selected{% endif %}>{{a}}</option>{% endfor %}</select>
+    </div>
+    <div class="fld"><label>Mês</label>
+      <select name="mes"><option value="">Todos</option>
+        {% for m in ['01','02','03','04','05','06','07','08','09','10','11','12'] %}<option value="{{m}}" {% if m==mes %}selected{% endif %}>{{m}}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld"><label>Mostrar</label>
+      <select name="mostrar"><option value="problemas" {% if mostrar=='problemas' %}selected{% endif %}>Só com divergência</option><option value="tudo" {% if mostrar=='tudo' %}selected{% endif %}>Todas</option></select>
+    </div>
+    <div class="fld"><label>Modelos</label>
+      <div style="display:flex;gap:10px;padding-bottom:8px">
+        <label class="chk" style="font-size:12px"><input type="checkbox" name="modelo" value="NFe" {% if 'NFe' in modelos_selecionados %}checked{% endif %} style="width:auto"> NF-e</label>
+        <label class="chk" style="font-size:12px"><input type="checkbox" name="modelo" value="NFCe" {% if 'NFCe' in modelos_selecionados %}checked{% endif %} style="width:auto"> NFC-e</label>
+        <label class="chk" style="font-size:12px"><input type="checkbox" name="modelo" value="NFSe" {% if 'NFSe' in modelos_selecionados %}checked{% endif %} style="width:auto"> NFS-e</label>
+      </div>
+    </div>
+    <button class="btn btn-primary sm">Aplicar</button>
+    <a href="{{ url_for('fiscal_auditoria', aplicado='1') }}" class="btn btn-ghost sm">Todas competências</a>
+  </form>
+</div>
+
+<div class="kpis" style="margin-bottom:18px">
+  <div class="kpi" style="--kbg:#eef0fe;--kfg:#6366f1"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M6 21V7l6-4 6 4v14"/></svg></div><div class="val">{{ resumo.empresas }}</div><div class="lab">Empresas auditadas</div></div>
+  <div class="kpi" style="--kbg:#fdecec;--kfg:#ef4444"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg></div><div class="val" style="color:{{ 'var(--err)' if resumo.com_quebra else 'var(--ok)' }}">{{ resumo.com_quebra }}</div><div class="lab">Com divergência</div></div>
+  <div class="kpi" style="--kbg:#fff7ed;--kfg:#f59e0b"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V4h16v3M9 20h6M12 4v16"/></svg></div><div class="val">{{ resumo.series_quebra }}</div><div class="lab">Séries com quebra</div></div>
+  <div class="kpi" style="--kbg:#fdecec;--kfg:#ef4444"><div class="kico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></div><div class="val">{{ resumo.faltam }}</div><div class="lab">Números faltando</div></div>
+</div>
+
+{% set bad = [] %}
+{% for cnpj, d in ordenadas %}{% if d.n_quebra %}{% set _ = bad.append((cnpj, d)) %}{% endif %}{% endfor %}
+
+{% if bad %}
+<div class="card" style="border-color:color-mix(in srgb,var(--err) 30%,var(--line))">
+  <h2 style="margin:0 0 4px;font-size:14px">Empresas com divergência — clique para ir ao detalhe</h2>
+  <div class="chips">
+    {% for cnpj, d in bad %}<a class="chip-emp" href="#emp-{{ cnpj }}" onclick="abrir('{{ cnpj }}')">{{ d.nome|title }} <span class="n">{{ d.n_quebra }}</span></a>{% endfor %}
+  </div>
+</div>
+{% elif resumo.empresas %}
+<div class="card" style="border-color:color-mix(in srgb,var(--ok) 30%,var(--line))">
+  <p style="margin:0;color:var(--ok);font-weight:600">✓ Nenhuma divergência de numeração no filtro atual.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  {% set visiveis = ordenadas if mostrar=='tudo' else bad %}
+  {% if not visiveis %}
+  <p class="muted" style="text-align:center;padding:24px">
+    {% if resumo.empresas %}Nenhuma empresa com divergência. Troque "Mostrar" para <b>Todas</b> para ver o detalhe completo.
+    {% else %}Nenhuma NF emitida encontrada no filtro. Verifique se há saída/venda/prestação baixada.{% endif %}
+  </p>
+  {% else %}
+  {% for cnpj, d in visiveis %}
+  <div class="emp-card {{ 'bad' if d.n_quebra else '' }} {{ 'open' if d.n_quebra }}" id="emp-{{ cnpj }}">
+    <div class="emp-bar" onclick="this.parentElement.classList.toggle('open')">
+      <h3>{{ d.nome|title }}</h3>
+      <span class="muted mono">{{ cnpj }}</span>
+      {% if d.n_quebra %}<span class="badge bad">{{ d.n_quebra }} série(s) · {{ d.faltam }} faltando</span>{% else %}<span class="badge ok">sem divergência</span>{% endif %}
+      <svg class="chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+    </div>
+    <div class="emp-body">
+      <div class="tbl-wrap"><table class="tbl-aud">
+        <thead><tr>
+          <th>Competência</th><th>Modelo</th><th>Série</th>
+          <th style="text-align:right" title="nNF distintos baixados (autorizadas + canceladas)">No range</th>
+          <th style="text-align:right">Válidas</th><th style="text-align:right">Cancel.</th>
+          <th style="text-align:right">De</th><th style="text-align:right">Até</th>
+          <th style="text-align:right">Esperadas</th>
+          <th style="text-align:right">Faltam</th><th>Números ausentes</th>
+        </tr></thead>
+        <tbody>
+        {% for r in d.linhas %}
+          <tr>
+            <td class="mono">{{ r.competencia }}</td>
+            <td><span class="subpill {{ r.modelo }}">{{ r.modelo }}</span></td>
+            <td>{{ r.serie }}</td>
+            <td class="cell-num"><b>{{ r.qtd }}</b></td>
+            <td class="cell-num">{{ r.validas }}</td>
+            <td class="cell-num muted">{{ r.canceladas or '—' }}</td>
+            <td class="cell-num">{{ r.minimo }}</td>
+            <td class="cell-num">{{ r.maximo }}</td>
+            <td class="cell-num">{{ r.esperados }}</td>
+            <td class="cell-num"><b style="color:{{ 'var(--err)' if r.quebra else 'var(--ok)' }}">{{ r.faltam }}</b></td>
+            <td><span class="buracos {{ 'zero' if r.faltam==0 }}">{{ r.buracos_resumido }}</span></td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+    </div>
+  </div>
+  {% endfor %}
+  {% endif %}
+</div>
+
+<div class="card" style="background:var(--surface2);border:1px solid var(--line)">
+  <p class="note" style="margin:0"><b>Como ler:</b> <b>Esperadas</b> = último − primeiro + 1. <b>No range</b> = nNFs baixados (a SEFAZ reserva o número mesmo de canceladas, por isso contam). <b>Válidas</b> = não canceladas. <b>Faltam</b> = números dentro do intervalo que <b>não baixamos</b> (podem ser cancelamentos cujo XML não veio, ou notas que o motor ainda não trouxe). Marque "não contar canceladas na sequência" no filtro avançado para ver só as autorizadas.</p>
+</div>
+
+<script>
+function abrir(cnpj){ var el=document.getElementById('emp-'+cnpj); if(el){ el.classList.add('open'); } }
+// se a URL tiver ancora, abre o card correspondente
+if(location.hash && location.hash.indexOf('#emp-')===0){ abrir(location.hash.slice(5)); }
+</script>
+{% endblock %}

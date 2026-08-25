@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+{% block titulo %}Downloads{% endblock %}
+{% block corpo %}
+<style>
+.dlrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
+.dlrow .selk{padding:7px 9px;font-size:12.5px;width:auto}
+.doctag{font-size:11px;font-weight:800;padding:3px 9px;border-radius:7px}
+.doctag.nfe{background:#e0f2fe;color:#0369a1} .doctag.nfse{background:#f3e8ff;color:#7c3aed}
+.doctag.nfce{background:#dcfce7;color:#15803d}
+:root[data-theme="dark"] .doctag.nfe{background:#0c3049;color:#7dd3fc}
+:root[data-theme="dark"] .doctag.nfse{background:#2a1a45;color:#c4b5fd}
+:root[data-theme="dark"] .doctag.nfce{background:#0e2a1c;color:#86efac}
+.filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.filtros .fld{display:flex;flex-direction:column;gap:4px}
+.filtros label{margin:0}
+.filtros input,.filtros select{width:auto;padding:9px 11px;font-size:13px}
+.filtros .busca{width:200px}
+.count{font-size:12.5px;color:var(--sub)}
+</style>
+
+<div class="card">
+  <div class="between" style="margin-bottom:10px">
+    <div><h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Download por competência</h2>
+      <p class="desc" style="margin:2px 0 0">Filtre por empresa, ano, mês e tipo. Depois baixe o ZIP. <b>Entradas</b>=compras · <b>Saídas</b>=vendas · <b>Tomados</b>=serviços contratados · <b>Prestados</b>=serviços prestados · <b>NFC-e</b>=varejo.</p></div>
+  </div>
+
+  <form method="get" class="filtros">
+    <input type="hidden" name="aplicado" value="1">
+    <div class="fld"><label>Empresa</label><input class="busca" name="q" value="{{ q }}" placeholder="nome ou CNPJ"></div>
+    <div class="fld"><label>Ano</label>
+      <select name="ano"><option value="">Todos</option>{% for a in anos %}<option value="{{a}}" {% if a==ano %}selected{% endif %}>{{a}}</option>{% endfor %}</select>
+    </div>
+    <div class="fld"><label>Mês</label>
+      <select name="mes"><option value="">Todos</option>
+        {% for m in ['01','02','03','04','05','06','07','08','09','10','11','12'] %}<option value="{{m}}" {% if m==mes %}selected{% endif %}>{{m}}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld"><label>Documento</label>
+      <select name="doc"><option value="">Todos</option>
+        <option value="NFe" {% if doc_f=='NFe' %}selected{% endif %}>NF-e</option>
+        <option value="NFSe" {% if doc_f=='NFSe' %}selected{% endif %}>NFS-e</option>
+        <option value="NFCe" {% if doc_f=='NFCe' %}selected{% endif %}>NFC-e</option>
+      </select>
+    </div>
+    <button class="btn btn-primary sm">Filtrar</button>
+    <a href="{{ url_for('downloads', aplicado='1') }}" class="btn btn-ghost sm">Todas competências</a>
+  </form>
+  <p class="count" style="margin:12px 0 0">{{ n_emp }} empresa(s) · {{ n_zip }} pacote(s) no filtro atual{% if mes or ano %} · <b>{{ (mes ~ '/' ~ ano) if (mes and ano) else (ano or mes) }}</b>{% endif %}. <span class="muted">Por padrão mostra o mês anterior (apuração).</span></p>
+</div>
+
+<div class="card">
+  {% if not itens %}<div class="muted" style="text-align:center;padding:30px">Nenhum XML no filtro atual. Ajuste os filtros acima ou rode uma varredura no <a href="{{ url_for('dashboard') }}">Painel</a>.</div>{% endif %}
+  {% for it in itens %}
+  <div style="padding:15px 0;border-bottom:1px solid var(--line)">
+    <div class="empresa-nome">{{ it.e['nome']|title }} <span class="mono muted">{{ it.e['cnpj'] }}</span></div>
+
+    {% if it.nfe %}
+    <form class="dlrow" method="get" action="{{ url_for('download') }}">
+      <span class="doctag nfe">NF-e</span>
+      <input type="hidden" name="cnpj" value="{{ it.e['cnpj'] }}"><input type="hidden" name="doc" value="NFe">
+      <input type="hidden" name="ano" value="{{ ano }}"><input type="hidden" name="mes" value="{{ mes }}">
+      <select name="comp" class="selk"><option value="TODAS">Todas as listadas</option>{% for c in it.nfe %}<option>{{ c }}</option>{% endfor %}</select>
+      <select name="tipo" class="selk"><option value="todos">Tudo</option><option value="entrada">Entradas (compras)</option><option value="saida">Saídas (vendas)</option></select>
+      <button class="btn btn-ghost sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Baixar ZIP</button>
+      {% if papel_atual=='admin' %}<button class="btn sm" style="background:var(--errbg);color:var(--err)" formaction="{{ url_for('xml_excluir') }}" formmethod="post" onclick="return confirm('Excluir os XML do filtro selecionado? Esta ação não pode ser desfeita.');">Excluir</button>{% endif %}
+    </form>
+    {% endif %}
+
+    {% if it.nfse %}
+    <form class="dlrow" method="get" action="{{ url_for('download') }}">
+      <span class="doctag nfse">NFS-e</span>
+      <input type="hidden" name="cnpj" value="{{ it.e['cnpj'] }}"><input type="hidden" name="doc" value="NFSe">
+      <input type="hidden" name="ano" value="{{ ano }}"><input type="hidden" name="mes" value="{{ mes }}">
+      <select name="comp" class="selk"><option value="TODAS">Todas as listadas</option>{% for c in it.nfse %}<option>{{ c }}</option>{% endfor %}</select>
+      <select name="tipo" class="selk"><option value="todos">Tudo</option><option value="tomado">Tomados (contratados)</option><option value="prestado">Prestados (prestados)</option></select>
+      <button class="btn btn-ghost sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Baixar ZIP</button>
+      {% if papel_atual=='admin' %}<button class="btn sm" style="background:var(--errbg);color:var(--err)" formaction="{{ url_for('xml_excluir') }}" formmethod="post" onclick="return confirm('Excluir os XML do filtro selecionado? Esta ação não pode ser desfeita.');">Excluir</button>{% endif %}
+    </form>
+    {% endif %}
+
+    {% if it.nfce %}
+    <form class="dlrow" method="get" action="{{ url_for('download') }}">
+      <span class="doctag nfce">NFC-e</span>
+      <input type="hidden" name="cnpj" value="{{ it.e['cnpj'] }}"><input type="hidden" name="doc" value="NFCe">
+      <input type="hidden" name="ano" value="{{ ano }}"><input type="hidden" name="mes" value="{{ mes }}">
+      <select name="comp" class="selk"><option value="TODAS">Todas as listadas</option>{% for c in it.nfce %}<option>{{ c }}</option>{% endfor %}</select>
+      <select name="tipo" class="selk"><option value="todos">Vendas (modelo 65)</option></select>
+      <button class="btn btn-ghost sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Baixar ZIP</button>
+      {% if papel_atual=='admin' %}<button class="btn sm" style="background:var(--errbg);color:var(--err)" formaction="{{ url_for('xml_excluir') }}" formmethod="post" onclick="return confirm('Excluir os XML do filtro selecionado? Esta ação não pode ser desfeita.');">Excluir</button>{% endif %}
+    </form>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

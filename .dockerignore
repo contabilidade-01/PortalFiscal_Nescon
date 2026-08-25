@@ -1,0 +1,33 @@
+# Nao mandar dados/segredos/lixo/manutencao para a imagem
+.env
+.env.local
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+portal_fiscal.db*
+
+# Dados e segredos
+XML/
+Certificados/
+data/
+logs/
+*.log
+*.pfx
+*.p12
+*.pem
+.cert_key
+
+# Documentacao e ferramentas de manutencao (nao precisam na imagem)
+docs/
+ferramentas/
+README.md
+
+# Python / git / temporarios
+__pycache__/
+*.pyc
+.venv/
+venv/
+.git/
+.gitignore
+.pytest_cache/

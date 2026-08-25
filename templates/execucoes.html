@@ -1,0 +1,298 @@
+{% extends 'base.html' %}
+{% block titulo %}Execuções{% endblock %}
+{% block corpo %}
+<style>
+.stpill{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;white-space:nowrap}
+.st-ok{background:var(--okbg);color:var(--ok)} .st-erro{background:var(--errbg);color:var(--err)}
+.st-rodando{background:#e0f2fe;color:#0369a1} .st-fila{background:var(--surface2);color:var(--sub)}
+.st-cancelado{background:var(--surface2);color:var(--muted)}
+.st-interrompido{background:color-mix(in srgb,var(--warn) 16%,transparent);color:var(--warn)}
+:root[data-theme="dark"] .st-rodando{background:#0c3049;color:#7dd3fc}
+
+/* Painel "o que esta acontecendo agora" */
+.live{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+.live .halo{width:52px;height:52px;border-radius:15px;display:grid;place-items:center;flex:none;
+  background:linear-gradient(135deg,var(--brand1),var(--brand2));color:#fff;box-shadow:0 8px 22px rgba(99,102,241,.35)}
+.live.parado .halo{background:var(--surface2);color:var(--muted);box-shadow:none;border:1px solid var(--line)}
+.live .txt{flex:1;min-width:240px}
+.live .t1{font-size:17px;font-weight:700;letter-spacing:-.3px}
+.live .t2{color:var(--sub);font-size:13.5px;margin-top:3px}
+.live .nums{display:flex;gap:22px;flex:none}
+.live .num b{display:block;font-size:22px;font-weight:800;letter-spacing:-.6px;line-height:1.1}
+.live .num span{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+
+.pbar{height:8px;border-radius:20px;background:var(--surface2);border:1px solid var(--line);overflow:hidden;margin-top:14px}
+.pbar>i{display:block;height:100%;border-radius:20px;background:linear-gradient(90deg,var(--brand1),var(--brand2));
+  transition:width .5s ease;width:0}
+.pbar.mini{height:5px;margin:5px 0 0;min-width:90px}
+
+/* Cartoes de escolha da busca */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:11px;margin:6px 0 4px}
+.tile{border:1.5px solid var(--line);border-radius:14px;padding:13px 15px;cursor:pointer;transition:.15s;
+  background:var(--surface2);display:block;position:relative}
+.tile:hover{border-color:color-mix(in srgb,var(--brand1) 45%,var(--line));transform:translateY(-1px)}
+.tile input{position:absolute;opacity:0;pointer-events:none}
+.tile b{font-size:13.5px;display:block;letter-spacing:-.1px}
+.tile small{color:var(--sub);font-size:12px;display:block;margin-top:3px;line-height:1.45}
+.tile.sel{border-color:var(--brand1);background:var(--surface);box-shadow:0 0 0 4px var(--ring)}
+.tile.sel b{color:var(--brand1)}
+
+.saude{display:flex;align-items:center;gap:10px;padding:11px 15px;border-radius:12px;font-size:13.5px;
+  border:1px solid var(--line);background:var(--surface2);margin-top:14px}
+.saude.alerta{background:color-mix(in srgb,var(--warn) 12%,transparent);
+  border-color:color-mix(in srgb,var(--warn) 35%,var(--line))}
+.saude.ruim{background:var(--errbg);border-color:color-mix(in srgb,var(--err) 30%,var(--line))}
+.saude svg{flex:none}
+.vazio{text-align:center;padding:30px 18px;color:var(--sub)}
+.vazio .ic{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;margin:0 auto 11px;
+  background:var(--surface2);color:var(--muted);border:1px solid var(--line)}
+</style>
+
+{# ---------- rotulos de apresentacao (o banco guarda slug, a tela nao mostra slug) ---------- #}
+{% set exec_tipo = {'nfe_entrada':'Entradas NF-e','nfe_saida':'Saídas NF-e','nfse':'NFS-e','nfce':'NFC-e'} %}
+{% set paradas = {
+  'fim':      ('Tudo baixado',        'ok',   'A SEFAZ respondeu que não há mais nada novo.'),
+  'cap':      ('Teto da rodada',      'nt',   'Parou no limite de lotes por rodada — a próxima busca continua de onde parou.'),
+  'limite':   ('Limite da rodada',    'nt',   'Bateu o limite configurado. Rode de novo que ela continua de onde parou.'),
+  '137':      ('Nada novo',           'ok',   'cStat 137 — nenhum documento novo para esta empresa.'),
+  '656':      ('Bloqueio temporário', 'wr',   'cStat 656 — consumo indevido. A empresa fica em espera por ~1 hora.'),
+  '429':      ('Limite de acessos',   'wr',   'HTTP 429 no Portal Nacional — espera automática antes de tentar de novo.'),
+  'resposta_invalida': ('Resposta inválida','er','O servidor respondeu algo que não é JSON válido.')
+} %}
+
+{# ---------- 1. O QUE ESTA ACONTECENDO AGORA ---------- #}
+<div class="card">
+  <div class="live parado" id="liveBox">
+    <div class="halo" id="liveIco">
+      <svg width="25" height="25" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    </div>
+    <div class="txt">
+      <div class="t1" id="liveT1">Nenhuma busca rodando</div>
+      <div class="t2" id="liveT2">Quando uma busca estiver em andamento, o progresso aparece aqui sozinho — não precisa atualizar a página.</div>
+    </div>
+    <div class="nums" id="liveNums" style="display:none">
+      <div class="num"><b id="liveDocs">0</b><span>documentos</span></div>
+      <div class="num"><b id="liveEmp">—</b><span>empresas</span></div>
+      <div class="num"><b id="liveTempo">—</b><span>rodando há</span></div>
+    </div>
+  </div>
+  <div class="pbar" id="livePbar" style="display:none"><i id="livePfill"></i></div>
+
+  {# saude do robo diario: num VPS, esta linha e o unico jeito de saber se o agendador rodou #}
+  {% set classe_saude = 'saude' if (horas_auto is not none and horas_auto <= 26) else ('saude ruim' if ultimo_auto is none else 'saude alerta') %}
+  <div class="{{ classe_saude }}">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+    {% if ultimo_auto %}
+      <span><b>Robô diário:</b> última rodada automática em
+      <b>{{ ultimo_auto['terminado'][8:10] }}/{{ ultimo_auto['terminado'][5:7] }} às {{ ultimo_auto['terminado'][11:16] }}</b>
+      {%- if horas_auto is not none %} (há {{ horas_auto|round|int }}h){% endif %} ·
+      {{ ultimo_auto['docs'] or 0 }} documento{{ '' if ultimo_auto['docs'] == 1 else 's' }} ·
+      {{ status_label.get(ultimo_auto['status'], ultimo_auto['status']) }}.
+      {% if horas_auto is not none and horas_auto > 26 %}
+        <b>Faz mais de um dia</b> — vale conferir se a tarefa agendada do servidor está ativa.
+      {% endif %}</span>
+    {% else %}
+      <span><b>Robô diário:</b> nenhuma rodada automática registrada ainda. Enquanto a tarefa agendada
+      não rodar, as buscas só acontecem quando alguém clicar aqui.</span>
+    {% endif %}
+  </div>
+</div>
+
+{# ---------- 2. NOVA BUSCA ---------- #}
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg> Buscar notas agora</h2>
+  <p class="desc">Escolha o que buscar. Roda em segundo plano para <b>todas as empresas marcadas</b> para aquele tipo — pode fechar a página que continua.</p>
+
+  <form method="post" action="{{ url_for('execucao_nova') }}" id="formBusca">
+    <div class="tiles">
+      {% set opcoes = [
+        ('completo',     'Busca completa',      'Entradas + ciência + saídas + NFS-e + NFC-e, nessa ordem.'),
+        ('nfe_entradas', 'Entradas NF-e',       'As compras que os clientes receberam.'),
+        ('nfe_saidas',   'Saídas NF-e',         'As vendas, pelo certificado do escritório (autXML).'),
+        ('nfse',         'NFS-e',               'Notas de serviço no Portal Nacional.'),
+        ('nfce',         'NFC-e',               'Vendas de varejo ao consumidor (SP).'),
+        ('ciencia',      'Ciência 210210',      'Manifesta as entradas pendentes para liberar o XML completo.')
+      ] %}
+      {% for valor, nome, desc in opcoes %}
+      <label class="tile{{ ' sel' if loop.first }}">
+        <input type="radio" name="tipo" value="{{ valor }}" {{ 'checked' if loop.first }}>
+        <b>{{ nome }}</b><small>{{ desc }}</small>
+      </label>
+      {% endfor %}
+    </div>
+
+    <div class="status-strip">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+      <span><b>O que será baixado:</b> <span id="periodoTxt"></span></span>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="btn btn-primary">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Iniciar busca
+      </button>
+      <span class="muted" style="align-self:center">Entra na fila e começa em alguns segundos.</span>
+    </div>
+  </form>
+</div>
+
+<script>
+var PERIODOS = {
+  'completo': 'Roda tudo em sequência: entradas + ciência + saídas + NFS-e + NFC-e (cada um no seu período).',
+  'nfe_entradas': {{ periodos['nfe_entradas']|tojson }},
+  'nfe_saidas': {{ periodos['nfe_saidas']|tojson }},
+  'nfse': {{ periodos['nfse']|tojson }},
+  'nfce': {{ periodos['nfce']|tojson }},
+  'ciencia': {{ periodos['ciencia']|tojson }}
+};
+(function(){
+  var tiles = document.querySelectorAll('#formBusca .tile');
+  function pinta(){
+    var v = 'completo';
+    tiles.forEach(function(t){
+      var r = t.querySelector('input');
+      t.classList.toggle('sel', r.checked);
+      if (r.checked) v = r.value;
+    });
+    document.getElementById('periodoTxt').textContent = PERIODOS[v] || '';
+  }
+  tiles.forEach(function(t){ t.querySelector('input').addEventListener('change', pinta); });
+  pinta();
+})();
+</script>
+
+{# ---------- 3. HISTORICO DE BUSCAS ---------- #}
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg> Buscas recentes</h2>
+  <p class="desc">Fila e histórico. <b>Origem</b> diz quem disparou: <i>agendado</i> é o robô, <i>manual</i> é alguém no sistema.</p>
+  <div class="tbl-wrap"><table style="min-width:820px">
+    <thead><tr><th>#</th><th>Busca</th><th>Origem</th><th>Situação</th><th style="min-width:180px">Progresso</th><th>Docs</th><th>Início</th><th>Fim</th><th></th></tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td class="mono">{{ j['id'] }}</td>
+      <td><b style="font-size:13px">{{ tipo_label.get(j['tipo'], j['tipo']) }}</b></td>
+      <td class="muted">{{ 'robô (agendado)' if j['origem'] == 'agendado' else 'manual' }}</td>
+      <td><span class="stpill st-{{ j['status'] }}">{{ status_label.get(j['status'], j['status']) }}</span></td>
+      <td class="muted">
+        {% if j['total'] %}
+          {{ j['feitos'] or 0 }} de {{ j['total'] }} empresas
+          <div class="pbar mini"><i style="width:{{ ((j['feitos'] or 0) * 100 // j['total']) }}%"></i></div>
+        {% elif j['status'] == 'fila' %}Aguardando a vez
+        {% endif %}
+        {% if j['atual'] %}<div style="margin-top:4px">{{ j['atual'] }}</div>
+        {% elif j['mensagem'] and j['status'] != 'ok' %}<div style="margin-top:4px">{{ j['mensagem'] }}</div>{% endif %}
+      </td>
+      <td><b>{{ j['docs'] or 0 }}</b></td>
+      <td class="muted">{% if j['iniciado'] %}{{ j['iniciado'][8:10] }}/{{ j['iniciado'][5:7] }} {{ j['iniciado'][11:16] }}{% else %}—{% endif %}</td>
+      <td class="muted">{% if j['terminado'] %}{{ j['terminado'][8:10] }}/{{ j['terminado'][5:7] }} {{ j['terminado'][11:16] }}{% else %}—{% endif %}</td>
+      <td>{% if j['status']=='fila' %}<form method="post" action="{{ url_for('job_cancelar', jid=j['id']) }}" style="margin:0"><button class="btn sm" style="background:var(--errbg);color:var(--err)">Cancelar</button></form>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9"><div class="vazio">
+      <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg></div>
+      <b>Nenhuma busca ainda.</b><div class="muted" style="margin-top:4px">Use “Buscar notas agora” acima ou espere o robô diário.</div>
+    </div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+{# ---------- 4. RESULTADO POR EMPRESA ---------- #}
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h5"/></svg> Resultado por empresa</h2>
+  <p class="desc">Últimas 100 empresas consultadas. <b>Como terminou</b> explica por que a busca parou naquela empresa — passe o mouse para ver o detalhe técnico.</p>
+  <div class="tbl-wrap"><table style="min-width:720px">
+    <thead><tr><th>Quando</th><th>Busca</th><th>Empresa</th><th>Docs</th><th>Como terminou</th><th>Detalhe</th></tr></thead>
+    <tbody>
+    {% for x in execs %}
+    <tr>
+      <td class="muted">{% if x['quando'] %}{{ x['quando'][8:10] }}/{{ x['quando'][5:7] }} {{ x['quando'][11:16] }}{% else %}—{% endif %}</td>
+      <td>{% if x['tipo'].startswith('nfe_entrada') %}<span class="tag ent">{{ exec_tipo.get(x['tipo'], x['tipo']) }}</span>
+          {%- else %}<span class="tag sai">{{ exec_tipo.get(x['tipo'], x['tipo']) }}</span>{% endif %}</td>
+      <td class="empresa-nome">{{ x['nome']|title }}</td>
+      <td><b>{{ x['docs'] }}</b></td>
+      <td>
+        {% set p = paradas.get(x['parada']) %}
+        {% if p %}
+          <span class="stpill {{ {'ok':'st-ok','wr':'st-rodando','er':'st-erro','nt':'st-fila'}[p[1]] }}" title="{{ p[2] }}">{{ p[0] }}</span>
+        {% elif x['parada'] and (x['parada'].startswith('erro') or x['parada'].startswith('http_') or x['parada'].startswith('cStat_')) %}
+          <span class="stpill st-erro" title="{{ x['parada'] }}">Falhou</span>
+        {% else %}
+          <span class="tag">{{ x['parada'] }}</span>
+        {% endif %}
+      </td>
+      <td class="muted mono">{{ x['detalhe'] }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6"><div class="vazio">
+      <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div>
+      <b>Nada registrado ainda.</b><div class="muted" style="margin-top:4px">Cada empresa consultada vira uma linha aqui.</div>
+    </div></td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<script>
+// Painel ao vivo: le /status (mesma fonte da barra do rodape) e atualiza sozinho.
+// Quando um job termina, recarrega a pagina UMA vez para as tabelas virem novas.
+(function(){
+  var TIPOS = {{ tipo_label|tojson }};
+  var box = document.getElementById('liveBox');
+  var rodavaAntes = false;
+
+  function seg(a, b){                    // diferenca em segundos entre 'YYYY-MM-DD HH:MM:SS'
+    var d1 = new Date(String(a).replace(' ', 'T')), d2 = new Date(String(b).replace(' ', 'T'));
+    var s = (d2 - d1) / 1000;
+    return (isNaN(s) || s < 0) ? 0 : s;
+  }
+  function humano(s){
+    if (s < 60) return Math.round(s) + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'min';
+    return Math.floor(s / 3600) + 'h' + ('0' + Math.floor((s % 3600) / 60)).slice(-2);
+  }
+
+  function pinta(j){
+    var r = j && j.rodando;
+    if (!r) {
+      if (rodavaAntes) { location.reload(); return; }   // acabou -> tabelas desatualizadas
+      box.classList.add('parado');
+      document.getElementById('liveT1').textContent = 'Nenhuma busca rodando';
+      document.getElementById('liveT2').textContent = j && j.fila
+        ? (j.fila + ' busca(s) na fila, começando em instantes.')
+        : 'Quando uma busca estiver em andamento, o progresso aparece aqui sozinho — não precisa atualizar a página.';
+      document.getElementById('liveNums').style.display = 'none';
+      document.getElementById('livePbar').style.display = 'none';
+      return;
+    }
+    rodavaAntes = true;
+    box.classList.remove('parado');
+    document.getElementById('liveIco').innerHTML =
+      '<span class="spin" style="width:22px;height:22px;border-width:3px;border-color:#fff;border-right-color:transparent"></span>';
+    document.getElementById('liveT1').textContent = TIPOS[r.tipo] || r.tipo || 'Buscando';
+    document.getElementById('liveT2').textContent =
+      (r.atual || r.mensagem || 'Preparando...') + (j.fila ? '  ·  +' + j.fila + ' na fila' : '');
+
+    var f = r.feitos || 0, t = r.total || 0;
+    document.getElementById('liveNums').style.display = 'flex';
+    document.getElementById('liveDocs').textContent = r.docs || 0;
+    document.getElementById('liveEmp').textContent = t ? (f + '/' + t) : '—';
+    document.getElementById('liveTempo').textContent =
+      (r.iniciado && j.agora) ? humano(seg(r.iniciado, j.agora)) : '—';
+
+    var pb = document.getElementById('livePbar');
+    if (t) {
+      pb.style.display = 'block';
+      document.getElementById('livePfill').style.width = Math.round(f * 100 / t) + '%';
+    } else { pb.style.display = 'none'; }
+  }
+
+  function poll(){
+    fetch('/status', {headers: {'Accept': 'application/json'}})
+      .then(function(r){ return r.json(); }).then(pinta).catch(function(){});
+  }
+  poll(); setInterval(poll, 3000);
+})();
+</script>
+{% endblock %}

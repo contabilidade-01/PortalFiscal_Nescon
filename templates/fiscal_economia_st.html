@@ -1,0 +1,128 @@
+{% extends 'base.html' %}
+{% block titulo %}ICMS-ST (Segregação){% endblock %}
+{% block corpo %}
+<style>
+.filtros{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end}
+.filtros .fld{display:flex;flex-direction:column;gap:4px}
+.filtros label{margin:0}
+.filtros input,.filtros select{width:auto;padding:9px 11px;font-size:13px}
+.compbadge{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:13px;color:var(--brand1);background:color-mix(in srgb,var(--brand1) 10%,transparent);border:1px solid color-mix(in srgb,var(--brand1) 25%,var(--line));padding:6px 12px;border-radius:20px}
+.stbl{min-width:980px;border-collapse:separate;border-spacing:0;width:100%;font-size:13px}
+.stbl th,.stbl td{padding:9px 11px;border-bottom:1px solid var(--line)}
+.stbl thead th{background:var(--surface2);text-align:right;font-size:11px;text-transform:uppercase;letter-spacing:.03em}
+.stbl thead th.l,.stbl td.l{text-align:left}
+.stbl td{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.stbl td.l{font-weight:600;white-space:normal;min-width:170px}
+.stbl .q{color:var(--sub);font-size:11.5px}
+.stbl tbody tr:hover td{background:var(--surface2)}
+.stbl .totrow td{border-top:2px solid var(--line);background:var(--surface2);font-weight:700}
+.stbl .eco{color:var(--ok);font-weight:800;font-size:15px}
+.stbl .st{font-weight:800;color:var(--warn)}
+.cst-tag{display:inline-block;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:6px;margin-left:3px;background:#dbeafe;color:#1e40af}
+.cst-tag.st{background:#fef3c7;color:#92400e}
+.leg{font-size:12px;color:var(--sub);margin-top:10px}
+.warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#92400e;margin:12px 0}
+</style>
+
+<div class="card">
+  <div class="between" style="margin-bottom:8px;flex-wrap:wrap;gap:10px">
+    <div><h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 22h20L12 2z"/><path d="M12 9v4M12 17h.01"/></svg> Receita com ICMS-ST (Segregação)</h2>
+      <p class="desc" style="margin:2px 0 0">Detecta, nas <b>vendas reais</b> (NF/NFCe saída), a receita com <b>ICMS-ST</b> (Substituição Tributária) — CST 10/30/60/70/90 ou CSOSN 201/202/500/900. A empresa do Simples que <b>revende</b> produto com ST pode <b>SEGREGAR</b> essa receita (LC 123 art. 13 §1º XIII "a" + Res CGSN 140/2018 art. 25 §8º II) — o ICMS próprio <b>deixa de incidir no DAS</b> sobre essa parcela. O ICMS-ST em si <b>já foi recolhido pela indústria</b> na origem (não há nova obrigação para o revendedor). <a href="{{ url_for('ajuda') }}" style="color:var(--brand1)">Entenda</a></p></div>
+    <span class="compbadge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg> Apuração: {{ comp_label }}</span>
+  </div>
+
+  <form method="get" class="filtros">
+    <input type="hidden" name="aplicado" value="1">
+    <div class="fld"><label>Empresa</label>
+      <select name="empresa" style="min-width:190px"><option value="">Todas ({{ empresas|length }})</option>
+        {% for e in empresas %}<option value="{{ e['cnpj'] }}" {% if e['cnpj']==empresa_sel %}selected{% endif %}>{{ e['nome']|title }}</option>{% endfor %}
+      </select>
+    </div>
+    <div class="fld"><label>Ano</label>
+      <select name="ano"><option value="">Todos</option>{% for a in anos %}<option value="{{a}}" {% if a==ano %}selected{% endif %}>{{a}}</option>{% endfor %}</select>
+    </div>
+    <div class="fld"><label>Mês</label>
+      <select name="mes"><option value="">Todos</option>
+        {% for m in ['01','02','03','04','05','06','07','08','09','10','11','12'] %}<option value="{{m}}" {% if m==mes %}selected{% endif %}>{{m}}</option>{% endfor %}
+      </select>
+    </div>
+    <label class="chk" style="font-size:12.5px;margin-bottom:9px"><input type="checkbox" name="ocultar" value="1" {% if ocultar %}checked{% endif %} style="width:auto"> só com ST</label>
+    <button class="btn btn-primary sm">Aplicar</button>
+    <a href="{{ url_for('fiscal_economia_st', aplicado='1') }}" class="btn btn-ghost sm">Todas competências</a>
+  </form>
+</div>
+
+<div class="warn">
+  <b>Como funciona (revenda):</b> a receita com ST sai da base do <b>DAS</b>
+  (LC 123 art. 13 §1º XIII "a" + Res CGSN 140 art. 25 §8º II) — o ICMS próprio
+  <b>deixa de incidir</b> sobre essa parcela. <b>O ICMS-ST em si já foi recolhido
+  pela indústria</b> na origem (o revendedor não paga ICMS-ST por fora).
+  A projeção mostra: <b>(1)</b> % do faturamento com ST; <b>(2)</b> economia
+  potencial no DAS (parcela ICMS que deixa de compor a guia).
+  Alíquota interna: extraída do XML (ICMS00/pICMS) ou da UF do cadastro.
+  <br><b>Atenção (substituto):</b> se a empresa é <b>substituta</b> (indústria/
+  atacadista do Simples), ela <b>também</b> recolhe ICMS-ST por fora (GIA-ST
+  estadual) sobre a parcela retida do substituído — caso não coberto aqui.
+</div>
+
+<div class="kpis" style="margin-bottom:18px">
+  <div class="kpi" style="--kbg:#fff7ed;--kfg:#f59e0b"><div class="val" style="font-size:19px">R$ {{ tot.fat_com_st|brl }}</div><div class="lab">Receita com ST</div></div>
+  <div class="kpi" style="--kbg:#e0f2fe;--kfg:#0ea5e9"><div class="val">{{ tot.n_com_st }}</div><div class="lab">Empresas com ST</div></div>
+  <div class="kpi" style="--kbg:#e7f8f0;--kfg:#10b981"><div class="val" style="font-size:19px">R$ {{ tot.economia_total|brl }}</div><div class="lab">Economia no DAS / mês</div></div>
+  <div class="kpi" style="--kbg:#fef3c7;--kfg:#d97706"><div class="val" style="font-size:19px">R$ {{ (tot.fat_total - tot.fat_com_st)|brl }}</div><div class="lab">Receita sem ST</div></div>
+</div>
+
+<div class="card">
+  {% if not linhas %}
+  <p class="muted" style="text-align:center;padding:24px">Nenhuma venda baixada em <b>{{ comp_label }}</b> com produto identificável como ICMS-ST. Puxe as saídas no <a href="{{ url_for('dashboard') }}">Painel</a> ou ajuste o filtro.</p>
+  {% else %}
+  <div class="tbl-wrap"><table class="stbl">
+    <thead><tr>
+      <th class="l">Empresa</th>
+      <th>UF</th>
+      <th>Faturamento (venda)</th>
+      <th>Receita com ST</th>
+      <th>% ST</th>
+      <th>Alíq. interna</th>
+      <th>Códigos ICMS</th>
+      <th>Economia DAS / mês</th>
+    </tr></thead>
+    <tbody>
+      {% for r in linhas %}
+      <tr>
+        <td class="l">{{ r.nome|title }}<div class="mono muted" style="font-weight:400;font-size:11px">{{ r.cnpj }}</div></td>
+        <td>{{ r.uf or '—' }}</td>
+        <td>R$ {{ r.fat_total|brl }}<div class="q">{{ r.notas_total }} NFs</div></td>
+        <td class="{% if r.fat_com_st>0 %}st{% endif %}">R$ {{ r.fat_com_st|brl }}<div class="q">{{ r.notas_com_st }} NFs c/ ST</div></td>
+        <td>{% if r.fat_com_st>0 %}<b class="st">{{ r.pct_st }}%</b>{% else %}<span class="muted">0%</span>{% endif %}</td>
+        <td>{{ r.aliquota_interna or '—' }}%<div class="q">{{ r.aliquota_origem }}</div></td>
+        <td>
+          {% for cst in r.csts_encontrados %}
+            {% if cst in ['10','30','60','70','90','201','202','203','500','900'] %}
+              <span class="cst-tag st">{{ cst }}</span>
+            {% else %}
+              <span class="cst-tag">{{ cst }}</span>
+            {% endif %}
+          {% endfor %}
+        </td>
+        <td>{% if r.fat_com_st>0 %}<span class="eco">R$ {{ r.economia_das|brl }}</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
+      {% endfor %}
+      <tr class="totrow">
+        <td class="l">TOTAL ({{ linhas|length }})</td>
+        <td></td>
+        <td>R$ {{ tot.fat_total|brl }}</td>
+        <td>R$ {{ tot.fat_com_st|brl }}</td>
+        <td>{{ ((tot.fat_com_st/tot.fat_total*100)|round(1)) if tot.fat_total else 0 }}%</td>
+        <td></td>
+        <td></td>
+        <td><span class="eco">R$ {{ tot.economia_total|brl }}</span></td>
+      </tr>
+    </tbody>
+  </table></div>
+  <p class="leg">
+    <b>Como é calculado:</b> CST/CSOSN indica ICMS-ST (10/30/60/70/90 no regime normal; 201/202/500/900 no Simples). A receita com ST <b>sai da base do DAS</b> (LC 123/2006 art. 13 §1º XIII 'a' + Res CGSN 140/2018 art. 25 §8º II) — o ICMS próprio deixa de incidir sobre ela. O ICMS-ST em si <b>já foi recolhido pela indústria na origem</b> (o revendedor não paga ICMS-ST por fora). <b>Economia no DAS</b> = receita com ST × alíquota interna × <b>~32%</b> (parcela do ICMS dentro do Simples Anexo I, faixa 1 — simplificado). Cadastre <b>Anexo</b> e <b>RBT12</b> para o cálculo exato; confirme com seu contador antes de retificar o PGDAS-D. <b>Substituto</b> (indústria/atacadista): recolhe ICMS-ST via GIA-ST estadual — caso não coberto aqui.
+  </p>
+  {% endif %}
+</div>
+{% endblock %}

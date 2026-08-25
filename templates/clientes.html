@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+{% block titulo %}Clientes{% endblock %}
+{% block corpo %}
+<style>
+.chk{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--sub);cursor:pointer}
+.chk input{width:auto;margin:0}
+.mini{padding:6px 8px;font-size:12.5px;width:auto}
+.rowform{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.certbadge{font-size:11px;font-weight:700;padding:3px 8px;border-radius:7px}
+.certbadge.ok{background:var(--okbg);color:var(--ok)} .certbadge.no{background:var(--errbg);color:var(--err)}
+</style>
+
+<div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:14px 22px">
+  <span class="muted" style="font-size:13px">🔐 A gestão de certificados agora fica separada.</span>
+  <a href="{{ url_for('certificados') }}" class="btn btn-ghost sm">Ir para Certificados →</a>
+</div>
+
+<div class="card">
+  <div class="between" style="margin-bottom:14px">
+    <h2 style="margin:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg> Base única de clientes <span class="tag">{{ empresas|length }}</span></h2>
+    <div class="rowform">
+      <a href="{{ url_for('cliente_novo') }}" class="btn btn-primary sm"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Novo cliente</a>
+      <form method="get" class="rowform" style="margin:0"><input name="q" value="{{ q }}" placeholder="buscar nome/CNPJ" class="mini" style="width:180px"><button class="btn btn-ghost sm">Buscar</button></form>
+    </div>
+  </div>
+  <p class="desc" style="margin-top:-6px">Marque quais puxadores cada cliente usa e o método de saída. Cada linha salva individualmente.</p>
+  <div class="tbl-wrap">
+  <table style="min-width:900px">
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Puxadores</th><th>Método saída</th><th>Emissor</th><th>Ativo</th><th>Ações</th></tr></thead>
+    <tbody>
+    {% for e in empresas %}
+    <tr>
+      <td class="empresa-nome" style="max-width:220px">{{ e['nome']|title }}</td>
+      <td class="mono">{{ e['cnpj'] }}</td>
+      <td>{% if e['senha_ok'] %}<span class="certbadge ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="certbadge no">falta</span>{% endif %}</td>
+      <td colspan="4">
+        <form method="post" action="{{ url_for('cliente_salvar', eid=e['id']) }}?q={{ q }}" class="rowform">
+          <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if e['puxa_nfe'] }}> NF-e</label>
+          <label class="chk"><input type="checkbox" name="puxa_nfse" {{ 'checked' if e['puxa_nfse'] }}> NFS-e</label>
+          <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if e['puxa_nfce'] }}> NFC-e</label>
+          <select name="metodo_saida" class="mini">
+            {% for v,l in [('a_verificar','saída: a verificar'),('autXML','saída: autXML'),('conector','saída: conector'),('origem','saída: origem/emissor'),('nao_aplica','saída: não se aplica')] %}
+            <option value="{{ v }}" {{ 'selected' if e['metodo_saida']==v }}>{{ l }}</option>{% endfor %}
+          </select>
+          <input name="emissor" value="{{ e['emissor'] or '' }}" placeholder="emissor (Bling...)" class="mini" style="width:130px">
+          <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if e['ativo'] }}> ativo</label>
+          <button class="btn btn-ghost sm">Salvar</button>
+        </form>
+      </td>
+      <td>
+        <div class="rowform" style="gap:6px;flex-wrap:nowrap">
+          <a href="{{ url_for('cliente_editar', eid=e['id']) }}" class="btn btn-ghost sm" title="Editar cadastro">Editar</a>
+          <form method="post" action="{{ url_for('cliente_excluir', eid=e['id']) }}" style="margin:0"
+                onsubmit="return confirm('Excluir este cliente da base? Esta ação não pode ser desfeita.');">
+            <button class="btn sm" style="background:var(--errbg);color:var(--err)" title="Excluir da base">Excluir</button>
+          </form>
+        </div>
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="8" class="muted" style="text-align:center;padding:30px">Nenhuma empresa.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

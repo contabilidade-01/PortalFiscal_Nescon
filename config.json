@@ -1,0 +1,15 @@
+{
+  "pasta_saida_xml": "C:/Users/parce/OneDrive/Desktop/OneDrive - Nescon/OneDrive/00_Nescon Contabilidade/0011_TEMPORARIOS/TESTENFE/PortalFiscal_Nescon/XML",
+  "porta": 5001,
+  "pasta_local_extra": "",
+  "nfe": {
+    "max_lotes_por_run": 20,
+    "espera_seg": 2
+  },
+  "nfse": {
+    "base_url": "https://adn.nfse.gov.br",
+    "max_rounds_por_empresa": 50,
+    "espera_seg": 2,
+    "timeout_seg": 60
+  }
+}

@@ -1,0 +1,58 @@
+{% extends 'base.html' %}
+{% block titulo %}{{ 'Editar' if u else 'Novo' }} usuário{% endblock %}
+{% block corpo %}
+<style>
+.emplist{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-top:8px;background:var(--surface2)}
+.emplist label{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:500;color:var(--txt);padding:5px 0;margin:0;cursor:pointer}
+.emplist input{width:auto;margin:0}
+.chk{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:600;color:var(--txt);cursor:pointer}
+.chk input{width:auto;margin:0}
+</style>
+<div style="max-width:720px;margin:0 auto">
+  <a href="{{ url_for('usuarios') }}" class="muted" style="text-decoration:none;font-size:13px">← voltar para Usuários</a>
+  <div class="card" style="margin-top:12px">
+    <h2>{{ 'Editar usuário' if u else 'Novo usuário' }}</h2>
+    <form method="post" action="{{ url_for('usuario_editar', uid=u['id']) if u else url_for('usuario_novo') }}">
+      <div class="grid" style="gap:0 18px">
+        <div><label>Nome</label><input name="nome" value="{{ u['nome'] if u else '' }}" required></div>
+        <div><label>Login</label>
+          {% if u %}<input value="{{ u['login'] }}" disabled>{% else %}<input name="login" required>{% endif %}
+        </div>
+        <div><label>Senha {% if u %}<span class="muted">(deixe em branco p/ manter)</span>{% endif %}</label>
+          <input name="senha" type="text" placeholder="{{ '••••••' if u else 'defina uma senha' }}"></div>
+        <div><label>Papel</label>
+          <select name="papel" id="papel" onchange="toggleTodas()">
+            <option value="operador" {{ 'selected' if u and u['papel']=='operador' }}>Operador</option>
+            <option value="admin" {{ 'selected' if u and u['papel']=='admin' }}>Administrador</option>
+          </select>
+        </div>
+      </div>
+      <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:14px">
+        <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (u['ativo'] if u else 1) }}> Ativo</label>
+        <label class="chk"><input type="checkbox" name="todas_empresas" id="todas" onchange="toggleTodas()" {{ 'checked' if u and u['todas_empresas'] }}> Acesso a TODAS as empresas</label>
+      </div>
+
+      <div id="boxEmpresas">
+        <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:16px 0 4px;font-weight:700">Empresas que este operador pode ver/baixar</h3>
+        <div class="emplist">
+          {% for e in empresas %}
+          <label><input type="checkbox" name="empresas" value="{{ e['id'] }}" {{ 'checked' if e['id'] in sel }}>
+            {{ e['nome']|title }} <span class="mono muted">{{ e['cnpj'] }}</span></label>
+          {% endfor %}
+        </div>
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:20px">{{ 'Salvar alterações' if u else 'Criar usuário' }}</button>
+    </form>
+  </div>
+</div>
+<script>
+function toggleTodas(){
+  var admin=document.getElementById('papel').value==='admin';
+  var todas=document.getElementById('todas').checked || admin;
+  document.getElementById('todas').disabled = admin;
+  document.getElementById('boxEmpresas').style.display = todas ? 'none' : 'block';
+}
+toggleTodas();
+</script>
+{% endblock %}
