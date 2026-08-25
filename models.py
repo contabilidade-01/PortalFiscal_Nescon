@@ -129,6 +129,9 @@ def init_db():
         # Etapa 13: parametros do Simples p/ projecao de economia (monofasicos)
         _add_col(c, 'empresas', 'simples_anexo', "simples_anexo TEXT DEFAULT 'I'")
         _add_col(c, 'empresas', 'simples_rbt12', 'simples_rbt12 REAL DEFAULT 0')
+        # Anti-656 NFC-e + retomada agendada no worker (servidor)
+        _add_col(c, 'empresas', 'bloqueado_nfce_ate', 'bloqueado_nfce_ate TEXT')
+        _add_col(c, 'jobs', 'agendado_para', 'agendado_para TEXT')
         # admin inicial (senha vem de env em producao; local usa admin/admin)
         if not c.execute('SELECT 1 FROM usuarios LIMIT 1').fetchone():
             senha_inicial = os.environ.get('ADMIN_SENHA_INICIAL', 'admin')

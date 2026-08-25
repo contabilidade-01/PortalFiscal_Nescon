@@ -51,12 +51,14 @@
 {# ---------- rotulos de apresentacao (o banco guarda slug, a tela nao mostra slug) ---------- #}
 {% set exec_tipo = {'nfe_entrada':'Entradas NF-e','nfe_saida':'Saídas NF-e','nfse':'NFS-e','nfce':'NFC-e'} %}
 {% set paradas = {
-  'fim':      ('Tudo baixado',        'ok',   'A SEFAZ respondeu que não há mais nada novo.'),
-  'cap':      ('Teto da rodada',      'nt',   'Parou no limite de lotes por rodada — a próxima busca continua de onde parou.'),
-  'limite':   ('Limite da rodada',    'nt',   'Bateu o limite configurado. Rode de novo que ela continua de onde parou.'),
-  '137':      ('Nada novo',           'ok',   'cStat 137 — nenhum documento novo para esta empresa.'),
-  '656':      ('Bloqueio temporário', 'wr',   'cStat 656 — consumo indevido. A empresa fica em espera por ~1 hora.'),
-  '429':      ('Limite de acessos',   'wr',   'HTTP 429 no Portal Nacional — espera automática antes de tentar de novo.'),
+  'fim':      ('Tudo baixado',        'ok',   'A SEFAZ respondeu que não há mais nada novo. A empresa espera ~1 hora antes da próxima consulta (NT 2014.002).'),
+  'cap':      ('Teto da rodada',      'nt',   'Parou no limite de lotes. O servidor retoma esta empresa sozinho após a pausa, do último NSU.'),
+  'limite':   ('Limite da rodada',    'nt',   'Bateu o limite de NFC-e. O servidor espera e continua as chaves que faltam, sem martelar o IP.'),
+  '137':      ('Nada novo',           'ok',   'cStat 137 — nenhum documento novo. Próxima consulta só após ~1 hora.'),
+  '656':      ('Bloqueio temporário', 'wr',   'cStat 656 — consumo indevido. Espera ~1 hora e o servidor retoma sozinho.'),
+  '429':      ('Limite de acessos',   'wr',   'HTTP 429 — espera automática; o servidor retoma depois da pausa.'),
+  '108':      ('SEFAZ instável',      'wr',   'Serviço paralisado momentaneamente. Retoma após o cooldown.'),
+  'cooldown': ('Em espera',           'wr',   'Ainda dentro da pausa obrigatória. O servidor agenda a continuação e não consulta agora.'),
   'resposta_invalida': ('Resposta inválida','er','O servidor respondeu algo que não é JSON válido.')
 } %}
 
@@ -164,7 +166,7 @@ var PERIODOS = {
 {# ---------- 3. HISTORICO DE BUSCAS ---------- #}
 <div class="card">
   <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg> Buscas recentes</h2>
-  <p class="desc">Fila e histórico. <b>Origem</b> diz quem disparou: <i>agendado</i> é o robô, <i>manual</i> é alguém no sistema.</p>
+  <p class="desc">Fila e histórico. <b>Origem</b>: <i>agendado</i> é o robô diário, <i>retomada</i> é continuação após pausa da SEFAZ, <i>manual</i> é alguém no sistema.</p>
   <div class="tbl-wrap"><table style="min-width:820px">
     <thead><tr><th>#</th><th>Busca</th><th>Origem</th><th>Situação</th><th style="min-width:180px">Progresso</th><th>Docs</th><th>Início</th><th>Fim</th><th></th></tr></thead>
     <tbody>
@@ -172,13 +174,15 @@ var PERIODOS = {
     <tr>
       <td class="mono">{{ j['id'] }}</td>
       <td><b style="font-size:13px">{{ tipo_label.get(j['tipo'], j['tipo']) }}</b></td>
-      <td class="muted">{{ 'robô (agendado)' if j['origem'] == 'agendado' else 'manual' }}</td>
+      <td class="muted">{{ {'agendado':'robô (agendado)','retomada':'retomada (pausa SEFAZ)','manual':'manual'}.get(j['origem'], j['origem'] or 'manual') }}</td>
       <td><span class="stpill st-{{ j['status'] }}">{{ status_label.get(j['status'], j['status']) }}</span></td>
       <td class="muted">
         {% if j['total'] %}
           {{ j['feitos'] or 0 }} de {{ j['total'] }} empresas
           <div class="pbar mini"><i style="width:{{ ((j['feitos'] or 0) * 100 // j['total']) }}%"></i></div>
-        {% elif j['status'] == 'fila' %}Aguardando a vez
+        {% elif j['status'] == 'fila' %}
+          {% if 'agendado_para' in j.keys() and j['agendado_para'] %}Retoma às {{ j['agendado_para'][11:16] }}
+          {% else %}Aguardando a vez{% endif %}
         {% endif %}
         {% if j['atual'] %}<div style="margin-top:4px">{{ j['atual'] }}</div>
         {% elif j['mensagem'] and j['status'] != 'ok' %}<div style="margin-top:4px">{{ j['mensagem'] }}</div>{% endif %}

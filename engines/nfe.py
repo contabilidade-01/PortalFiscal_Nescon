@@ -2,10 +2,11 @@
 """Motor NFe - Distribuicao DF-e da SEFAZ (SOAP/mTLS). Portado e validado.
    ENTRADAS: cert de cada empresa. SAIDAS: cert do escritorio via autXML.
 """
-import os, re, ssl, json, time, base64, gzip, http.client
-from datetime import datetime, timedelta
+import os, re, json, time, base64, gzip, http.client
+from datetime import datetime
 import models
 from engines import certs
+from engines.pausa import NFE_ESPERA, NFE_COOLDOWN_MIN, cooldown_ate, em_cooldown, nsu15
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
@@ -92,20 +93,23 @@ def _salvar(cnpj, schema, xml, sub):
     pasta = os.path.join(SAIDA, cnpj, comp, 'NFe', sub); os.makedirs(pasta, exist_ok=True)
     open(os.path.join(pasta, '%s_%s.xml' % (nome, schema.replace('.xsd', ''))), 'w', encoding='utf-8').write(xml)
 
-def _cooldown(m=65): return (datetime.now() + timedelta(minutes=m)).strftime('%Y-%m-%d %H:%M:%S')
-
 def puxar_entradas(emp):
-    """emp: row de empresas. Varre compras (destinatario) + eventos com anti-656."""
+    """Compras (destinatario) + eventos via distNSU, com anti-656 da NT 2014.002.
+
+    - Continua do ultNSU gravado (nunca zera).
+    - cStat 137 ou ultNSU==maxNSU (fim): cooldown 65 min (oficial = 1h).
+    - cStat 656: cooldown 65 min; se a SEFAZ devolver ultNSU, grava (NT 1.14).
+    - Teto de lotes (cap): nao e cooldown — o worker retoma esta empresa apos uns segundos.
+    """
     cnpj, cuf = emp['cnpj'], emp['cuf'] or '35'
-    # Etapa 9: se flag forcar_nsu_nfe=1, usa nsu_inicial_forcado como base e zera a flag
-    ult = emp['ultnsu_nfe']
+    ult = nsu15(emp['ultnsu_nfe'])
     usou_forcado = False
     if emp['forcar_nsu_nfe'] and (emp['nsu_inicial_forcado'] or '').strip():
-        ult = emp['nsu_inicial_forcado'].strip()
+        ult = nsu15(emp['nsu_inicial_forcado'])
         usou_forcado = True
         with models.con() as c:
             c.execute('UPDATE empresas SET forcar_nsu_nfe=0 WHERE id=?', (emp['id'],))
-    if emp['bloqueado_nfe_ate'] and datetime.now().strftime('%Y-%m-%d %H:%M:%S') < emp['bloqueado_nfe_ate']:
+    if em_cooldown(emp['bloqueado_nfe_ate']):
         return 0, 'cooldown'
     if not emp['arquivo']:
         return 0, 'sem_certificado'
@@ -115,24 +119,33 @@ def puxar_entradas(emp):
     try:
         while lote < NFE['max_lotes_por_run']:
             lote += 1
+            models.registrar_consulta(cnpj, 'distNSU')
             st, b = _post(ctx, cuf, cnpj, '<distNSU><ultNSU>%s</ultNSU></distNSU>' % ult)
             if st != 200: parada = 'http_%d' % st; break
-            cS = _campo(b, 'cStat'); nu = _campo(b, 'ultNSU') or ult; maxn = _campo(b, 'maxNSU') or maxn
+            cS = _campo(b, 'cStat'); nu = nsu15(_campo(b, 'ultNSU') or ult); maxn = _campo(b, 'maxNSU') or maxn
             if cS == '138':
                 for nsu, schema, xml, sub, cnpj_dest in _docs_classificar(b, cnpj, eh_escritorio=False):
                     _salvar(cnpj_dest or cnpj, schema, xml, sub); total += 1
                 ult = nu
                 with models.con() as c: c.execute('UPDATE empresas SET ultnsu_nfe=? WHERE id=?', (ult, emp['id']))
                 if maxn and int(nu) >= int(maxn): parada = 'fim'; break
-            elif cS == '137': parada = '137'; break
-            elif cS == '656': parada = '656'; break
-            else: parada = 'cStat_%s' % cS; break
-            time.sleep(NFE['espera_seg'])
+            elif cS == '137':
+                parada = '137'; break
+            elif cS == '656':
+                parada = '656'
+                if _campo(b, 'ultNSU'):
+                    ult = nu
+                break
+            elif cS == '108':
+                parada = '108'; break
+            else:
+                parada = 'cStat_%s' % cS; break
+            time.sleep(NFE_ESPERA)
     finally:
         for f in tmp:
             try: os.remove(f)
             except Exception: pass
-    bloq = _cooldown() if parada in ('137', '656') else None
+    bloq = cooldown_ate(NFE_COOLDOWN_MIN) if parada in ('137', '656', 'fim', '108') else None
     with models.con() as c:
         c.execute('UPDATE empresas SET ultnsu_nfe=?, ultima_exec_nfe=?, total_nfe=total_nfe+?, bloqueado_nfe_ate=? WHERE id=?',
                   (ult, datetime.now().strftime('%Y-%m-%d %H:%M'), total, bloq, emp['id']))
@@ -145,12 +158,10 @@ def puxar_saidas_escritorio():
     """Cert do escritorio (parametros office_*) -> vendas de clientes via autXML."""
     office = models.get_param('office_cnpj'); arq = models.get_param('office_arquivo')
     sen = models.get_param('office_senha'); cuf = models.get_param('office_cuf') or '35'
-    ult = models.get_param('ultnsu_saida') or '000000000000000'
+    ult = nsu15(models.get_param('ultnsu_saida') or '000000000000000')
     if not (office and arq and sen): return 0, 'escritorio_nao_configurado'
-    # anti-bloqueio: se a SEFAZ ja rejeitou por consumo indevido (656) ou "nenhum doc" (137),
-    # espera o cooldown antes de consultar de novo (evita repetir a consulta do NSU 0).
     bloq = models.get_param('bloqueado_saida_ate')
-    if bloq and datetime.now().strftime('%Y-%m-%d %H:%M:%S') < bloq:
+    if em_cooldown(bloq):
         return 0, 'cooldown'
     try: ctx, tmp = certs.ssl_ctx(arq, sen)
     except Exception as e: return 0, 'erro_cert:%s' % str(e)[:40]
@@ -158,22 +169,33 @@ def puxar_saidas_escritorio():
     try:
         while lote < NFE['max_lotes_por_run']:
             lote += 1
+            models.registrar_consulta(office, 'distNSU')
             st, b = _post(ctx, cuf, office, '<distNSU><ultNSU>%s</ultNSU></distNSU>' % ult)
             if st != 200: parada = 'http_%d' % st; break
-            cS = _campo(b, 'cStat'); nu = _campo(b, 'ultNSU') or ult; maxn = _campo(b, 'maxNSU') or maxn
+            cS = _campo(b, 'cStat'); nu = nsu15(_campo(b, 'ultNSU') or ult); maxn = _campo(b, 'maxNSU') or maxn
             if cS == '138':
                 for nsu, schema, xml, sub, cnpj_dest in _docs_classificar(b, office, eh_escritorio=True):
                     _salvar(cnpj_dest or office, schema, xml, sub); total += 1
                 ult = nu; models.set_param('ultnsu_saida', ult)
                 if maxn and int(nu) >= int(maxn): parada = 'fim'; break
-            elif cS == '137': parada = '137'; models.set_param('bloqueado_saida_ate', _cooldown()); break
-            elif cS == '656': parada = '656'; models.set_param('bloqueado_saida_ate', _cooldown()); break
-            else: parada = 'cStat_%s' % cS; break
-            time.sleep(NFE['espera_seg'])
+            elif cS == '137':
+                parada = '137'; models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
+            elif cS == '656':
+                parada = '656'
+                if _campo(b, 'ultNSU'):
+                    ult = nu; models.set_param('ultnsu_saida', ult)
+                models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
+            elif cS == '108':
+                parada = '108'; models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
+            else:
+                parada = 'cStat_%s' % cS; break
+            time.sleep(NFE_ESPERA)
     finally:
         for f in tmp:
             try: os.remove(f)
             except Exception: pass
+    if parada == 'fim':
+        models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN))
     with models.con() as c:
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfe_saida', office, 'ESCRITORIO', datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada, 'ultNSU=%s' % ult))
