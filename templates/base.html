@@ -157,7 +157,7 @@ svg{display:block}
   {% set ep = request.endpoint %}
   {% set g_fiscal = ep in ['dashboard','clientes','certificados','downloads','cliente_novo','cliente_editar'] %}
   {% set g_analises = ep in ['fiscal_conferencia','fiscal_faturamento','fiscal_auditoria','fiscal_economia','fiscal_economia_mensuracao','fiscal_economia_st','das'] %}
-  {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes'] or (ep and ep.startswith('usuario')) %}
+  {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup'] or (ep and ep.startswith('usuario')) %}
   <nav class="topnav">
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_fiscal }}">Fiscal <span class="car">▼</span></button>
@@ -190,6 +190,7 @@ svg{display:block}
         <a href="{{ url_for('execucoes') }}" class="{{ 'active' if ep in ['execucoes','execucao_nova'] }}">Execuções</a>
         <a href="{{ url_for('protocolos') }}" class="{{ 'active' if ep=='protocolos' }}">Protocolos</a>
         <a href="{{ url_for('configuracoes') }}" class="{{ 'active' if ep=='configuracoes' }}">Configurações</a>
+        <a href="{{ url_for('backup') }}" class="{{ 'active' if ep=='backup' }}">Backup / subir dados</a>
         <a href="{{ url_for('usuarios') }}" class="{{ 'active' if ep and ep.startswith('usuario') }}">Usuários</a>
         <div class="sub-h">Importações</div>
         <a href="{{ url_for('importar_pgdas') }}" class="{{ 'active' if ep=='importar_pgdas' }}">Recibo PGDAS-D</a>
