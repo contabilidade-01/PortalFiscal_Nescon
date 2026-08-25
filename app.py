@@ -7,13 +7,14 @@ import os, io, re, json, zipfile, threading
 from functools import wraps
 from datetime import datetime
 from flask import (Flask, request, redirect, url_for, session, flash,
-                   render_template, send_file, abort)
+                   render_template, send_file, abort, after_this_request)
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
 import models
 import worker
 from engines import certs, nfe, nfse, conferencia, cfop, monofasico
+from engines import backup as bak
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
@@ -29,7 +30,7 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=(os.environ.get('FLASK_HTTPS') == '1'),  # ativar em HTTPS (prod)
-    MAX_CONTENT_LENGTH=25 * 1024 * 1024,  # limite de upload (certificados sao pequenos)
+    MAX_CONTENT_LENGTH=80 * 1024 * 1024,  # backup (cadastros + certificados)
 )
 # EasyPanel (e qualquer reverse proxy) manda X-Forwarded-Proto/Host. Sem isso o
 # cookie Secure e os redirects HTTPS quebram atras do painel.
@@ -340,6 +341,87 @@ def das():
 def ajuda():
     return render_template('ajuda.html')
 
+# ---- Backup / restauracao (admin) — migrar Windows -> EasyPanel ----
+def _backup_ctx():
+    vol = bak.zip_do_volume(models.DATA_DIR)
+    return {
+        'info': bak.resumo(models.DB, CERT_DIR),
+        'volume_zip': os.path.isfile(vol),
+        'volume_nome': bak.RESTAURAR_VOLUME,
+    }
+
+def _redir_backup():
+    if (request.form.get('voltar') or '') == 'config':
+        return redirect(url_for('configuracoes') + '#backup')
+    return redirect(url_for('backup'))
+
+@app.route('/backup')
+@admin_required
+def backup():
+    ctx = _backup_ctx()
+    ctx['voltar'] = 'backup'
+    return render_template('backup.html', **ctx)
+
+@app.route('/backup/baixar')
+@admin_required
+def backup_baixar():
+    nome = 'portal-fiscal-cadastros-certificados-%s.zip' % datetime.now().strftime('%Y%m%d-%H%M')
+    pasta = os.path.join(models.DATA_DIR, 'backups')
+    os.makedirs(pasta, exist_ok=True)
+    dest = os.path.join(pasta, nome)
+    bak.criar_zip(dest, models.DB, CERT_DIR)
+
+    @after_this_request
+    def _apagar(resp):
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return resp
+
+    return send_file(dest, as_attachment=True, download_name=nome,
+                     mimetype='application/zip')
+
+def _aplicar_zip(path):
+    r = bak.restaurar_zip(path, models.DB, CERT_DIR)
+    flash('Restaurado: %s cadastros e %s certificados. XML não entra neste backup — o servidor puxa de novo.' % (
+        r['empresas'], r['pfx']), 'ok')
+
+@app.route('/backup/restaurar', methods=['POST'])
+@admin_required
+def backup_restaurar():
+    fobj = request.files.get('zip')
+    if not fobj or not fobj.filename:
+        flash('Escolha o arquivo .zip do backup.', 'erro')
+        return _redir_backup()
+    pasta = os.path.join(models.DATA_DIR, 'backups')
+    os.makedirs(pasta, exist_ok=True)
+    dest = os.path.join(pasta, 'upload-%s.zip' % datetime.now().strftime('%Y%m%d-%H%M%S'))
+    fobj.save(dest)
+    try:
+        _aplicar_zip(dest)
+    except Exception as e:
+        flash('Não deu para restaurar: %s' % str(e)[:180], 'erro')
+    finally:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+    return _redir_backup()
+
+@app.route('/backup/restaurar-volume', methods=['POST'])
+@admin_required
+def backup_restaurar_volume():
+    vol = bak.zip_do_volume(models.DATA_DIR)
+    if not os.path.isfile(vol):
+        flash('Não achei %s na pasta de dados do servidor. Envie o zip pelo formulário ou coloque o arquivo nesse nome no volume.' % bak.RESTAURAR_VOLUME, 'erro')
+        return _redir_backup()
+    try:
+        _aplicar_zip(vol)
+    except Exception as e:
+        flash('Não deu para restaurar: %s' % str(e)[:180], 'erro')
+    return _redir_backup()
+
 # ---- Configuracoes (admin) — inclui a busca de NFC-e SP ----
 @app.route('/configuracoes', methods=['GET', 'POST'])
 @admin_required
@@ -356,8 +438,10 @@ def configuracoes():
         models.set_param('nfce_limite', re.sub(r'\D', '', request.form.get('limite', '500')) or '500')
         flash('Configurações salvas.', 'ok'); return redirect(url_for('configuracoes'))
     di = (models.get_param('nfce_data_inicial') or datetime.now().strftime('%Y-%m-01'))[:10]
+    ctx = _backup_ctx()
+    ctx['voltar'] = 'config'
     return render_template('configuracoes.html', ano=di[:4], mes=di[5:7], dia=di[8:10],
-                           limite=(models.get_param('nfce_limite') or '500'))
+                           limite=(models.get_param('nfce_limite') or '500'), **ctx)
 
 # ---- Gestao de execucoes (admin) ----
 # Rotulos em portugues claro: o banco guarda slug ('nfe_entradas', 'ok'), a tela

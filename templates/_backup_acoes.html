@@ -1,0 +1,41 @@
+{# Bloco Baixar / Subir backup. Espera: info, volume_zip, volume_nome, voltar ('backup'|'config') #}
+<style>
+.bakgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+@media(max-width:820px){.bakgrid{grid-template-columns:1fr}}
+.bakpane{background:var(--surface2);border:1px solid var(--line);border-radius:14px;padding:18px 18px 16px}
+.bakpane h3{margin:0 0 6px;font-size:15px;text-transform:none;letter-spacing:0;color:var(--txt)}
+.bakpane .hint{margin:0 0 14px;font-size:13px;color:var(--sub)}
+.baknums{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.baknums span{font-size:12px;background:var(--surface);border:1px solid var(--line);border-radius:20px;padding:4px 10px;color:var(--sub)}
+.baknums b{color:var(--txt)}
+.warnbox{background:var(--errbg);color:var(--err);border-radius:11px;padding:11px 14px;font-size:13px;margin-top:12px}
+</style>
+<div class="bakgrid">
+  <div class="bakpane">
+    <h3>Baixar backup</h3>
+    <p class="hint">Gera o ZIP deste aparelho (cadastros + certificados). XML não entra. O arquivo vai para a pasta <b>Downloads</b>.</p>
+    <a class="btn btn-primary" href="{{ url_for('backup_baixar') }}">Baixar ZIP agora</a>
+    <div class="baknums">
+      <span><b>{{ info.empresas }}</b> empresas</span>
+      <span><b>{{ info.pfx }}</b> certificados</span>
+      <span>{{ info.leve_fmt }}</span>
+    </div>
+  </div>
+  <div class="bakpane">
+    <h3>Subir backup</h3>
+    <p class="hint">Envie o ZIP baixado no outro computador. O login admin daqui <b>não muda</b>.</p>
+    <form method="post" action="{{ url_for('backup_restaurar') }}" enctype="multipart/form-data">
+      <input type="hidden" name="voltar" value="{{ voltar }}">
+      <label>Arquivo .zip</label>
+      <input type="file" name="zip" accept=".zip" required>
+      <button class="btn btn-success" style="margin-top:14px" type="submit" onclick="return confirm('Atualiza cadastros e certificados. XML não entra. Continuar?');">Enviar e restaurar</button>
+    </form>
+    {% if volume_zip %}
+    <form method="post" action="{{ url_for('backup_restaurar_volume') }}" style="margin-top:12px">
+      <input type="hidden" name="voltar" value="{{ voltar }}">
+      <button class="btn btn-ghost" type="submit">Restaurar {{ volume_nome }} do volume</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+<div class="warnbox">O ZIP tem <b>certificado A1 e senha</b>. Não envie por WhatsApp nem e-mail.</div>

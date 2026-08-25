@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block titulo %}Backup{% endblock %}
+{% block corpo %}
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5M12 15V3"/></svg> Backup</h2>
+  <p class="desc">Tela só para <b>baixar</b> e <b>subir</b> cadastros e certificados A1. Use no PC para gerar o ZIP e no servidor para importar. XML não entra — o servidor puxa as notas de novo.</p>
+  {% include '_backup_acoes.html' %}
+</div>
+{% endblock %}
