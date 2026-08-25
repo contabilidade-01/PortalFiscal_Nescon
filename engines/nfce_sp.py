@@ -14,9 +14,9 @@ import requests, urllib3
 import models
 from engines import certs
 from engines.pausa import (
-    NFCE_ESPERA, NFCE_LISTAGEM, NFCE_COOLDOWN_MIN, cooldown_ate, em_cooldown,
-    janela_nfce, pausa_nfce,
+    NFCE_ESPERA, NFCE_LISTAGEM, NFCE_COOLDOWN_MIN, cooldown_ate, janela_nfce, pausa_nfce,
 )
+from engines import guard
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -31,7 +31,7 @@ WSDL_LIST = "http://www.portalfiscal.inf.br/nfe/wsdl/NFCeListagemChaves"
 WSDL_DOWN = "http://www.portalfiscal.inf.br/nfe/wsdl/NFCeDownloadXML"
 NFE = "http://www.portalfiscal.inf.br/nfe"
 NS = {"soap": SOAP12, "nfe": NFE}
-VERSAO = "1.00"; TPAMB = 1; TIMEOUT = 40
+VERSAO = "1.00"; TPAMB = int(os.environ.get('FISCAL_TPAMB', '1')); TIMEOUT = 40
 
 class ConsumoIndevido(Exception):
     """SEFAZ-SP recusou por volume/consumo. Worker retoma apos cooldown."""
@@ -167,8 +167,9 @@ def puxar_nfce(emp, limite=None):
     parada=limite/656/429 -> o worker retoma esta empresa apos a pausa."""
     cnpj = emp['cnpj']
     bloq_ate = emp['bloqueado_nfce_ate'] if 'bloqueado_nfce_ate' in emp.keys() else None
-    if em_cooldown(bloq_ate):
-        return 0, 'cooldown'
+    d0 = guard.pode(cnpj, 'nfce')
+    if not d0.liberado:
+        return 0, d0.parada or 'cooldown'
     if (emp['uf'] or '').upper() not in ('', 'SP'):
         return 0, 'uf_nao_sp'
     if not emp['arquivo']:
@@ -197,20 +198,24 @@ def puxar_nfce(emp, limite=None):
                 pasta = os.path.join(SAIDA, cnpj, _comp_de(xml), 'NFCe', '01_venda')
                 os.makedirs(pasta, exist_ok=True)
                 open(os.path.join(pasta, ch + '.xml'), 'wb').write(xml); total += 1
-            elif cstat == 108:
-                parada = '108'; bloq = cooldown_ate(NFCE_COOLDOWN_MIN); break
+            elif cstat in (108, 109):
+                parada = str(cstat); bloq = cooldown_ate(NFCE_COOLDOWN_MIN)
+                guard.registrar_bloqueio(cnpj, 'nfce', str(cstat), nome=emp['nome']); break
     except ConsumoIndevido as e:
         parada = '656' if e.cstat == 656 else str(e.cstat)
         bloq = cooldown_ate(NFCE_COOLDOWN_MIN)
+        guard.registrar_bloqueio(cnpj, 'nfce', parada, e.xmot, nome=emp['nome'])
     except Exception as e:
         parada = 'erro:%s' % str(e)[:60]
     finally:
         for f in tmp:
             try: os.remove(f)
             except Exception: pass
+    if parada in ('fim', 'limite') and total:
+        guard.registrar_ok(cnpj, 'nfce')
     with models.con() as c:
-        c.execute('UPDATE empresas SET total_nfce=COALESCE(total_nfce,0)+?, ultima_exec_nfce=?, bloqueado_nfce_ate=? WHERE id=?',
-                  (total, datetime.now().strftime('%Y-%m-%d %H:%M'), bloq, emp['id']))
+        c.execute('UPDATE empresas SET total_nfce=COALESCE(total_nfce,0)+?, ultima_exec_nfce=? WHERE id=?',
+                  (total, datetime.now().strftime('%Y-%m-%d %H:%M'), emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfce', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'),
                    total, parada, 'desde %s | chaves=%d | janela<=%dd' % (

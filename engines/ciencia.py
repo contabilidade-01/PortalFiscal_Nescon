@@ -22,6 +22,7 @@ PATH = '/NFeRecepcaoEvento4/NFeRecepcaoEvento4.asmx'
 ACTION = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeRecepcaoEvento4/nfeRecepcaoEventoNF'
 C14N = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
 EXC = 'http://www.w3.org/2001/10/xml-exc-c14n#'
+TPAMB = int(os.environ.get('FISCAL_TPAMB', '1'))  # 1=Producao (default) | 2=Homologacao
 
 def _c14n(el):
     # NF-e exige C14N INCLUSIVA (schema). Assinatura valida offline; resta acertar
@@ -32,7 +33,7 @@ def _agora():
     tz = timezone(timedelta(hours=-3))
     return datetime.now(tz).strftime('%Y-%m-%dT%H:%M:%S-03:00')
 
-def montar_evento(cnpj, chNFe, nSeq=1, tpAmb=1):
+def montar_evento(cnpj, chNFe, nSeq=1, tpAmb=TPAMB):
     seq = str(nSeq)
     eid = 'ID210210%s%02d' % (chNFe, nSeq)
     E = '{%s}' % NS_NFE
@@ -71,7 +72,7 @@ def assinar(evento, eid, priv_key, cert):
     ctx.sign(sig)
     return evento
 
-def manifestar(cert_path, senha, cnpj, chNFe, nSeq=1, tpAmb=1):
+def manifestar(cert_path, senha, cnpj, chNFe, nSeq=1, tpAmb=TPAMB):
     """Assina e envia a Ciência 210210. Retorna (cStat, xMotivo, xml_resposta)."""
     key, cert, _ = certs.load_pfx(cert_path, senha)
     evento, eid = montar_evento(cnpj, chNFe, nSeq, tpAmb)
@@ -120,10 +121,12 @@ def dar_ciencia_pendentes(emp, limite=None, sleep_seg=None):
     """Manifesta Ciencia 210210 nos resumos (resNFe) que ainda nao viraram
     procNFe completo e que ainda nao tiveram ciencia (dedup em ciencia_dada).
     A varredura seguinte (retomada ou diario) traz o XML completo dessas notas."""
-    from engines.pausa import CIENCIA_ESPERA, CIENCIA_LIMITE, em_cooldown
+    from engines.pausa import CIENCIA_ESPERA, CIENCIA_LIMITE
+    from engines import guard
     cnpj = emp['cnpj']
-    if em_cooldown(emp['bloqueado_nfe_ate'] if 'bloqueado_nfe_ate' in emp.keys() else None):
-        return 0, 'cooldown'
+    d0 = guard.pode(cnpj, 'ciencia')
+    if not d0.liberado:
+        return 0, d0.parada or 'cooldown'
     if not emp['arquivo']:
         return 0, 'sem_certificado'
     if limite is None:
@@ -149,11 +152,18 @@ def dar_ciencia_pendentes(emp, limite=None, sleep_seg=None):
             n += 1
         elif cStat == '656':
             parada = '656'
+            guard.registrar_bloqueio(cnpj, 'ciencia', '656', xMot or '', nome=emp['nome'])
             break
-        time.sleep(sleep_seg)
+        elif cStat in ('108', '109'):
+            parada = cStat
+            guard.registrar_bloqueio(cnpj, 'ciencia', cStat, nome=emp['nome'])
+            break
+        guard.sleep_jitter(sleep_seg)
     else:
         if len(pendentes) > limite:
             parada = 'cap'
+        elif n:
+            guard.registrar_ok(cnpj, 'ciencia')
     return n, parada
 
 if __name__ == '__main__':

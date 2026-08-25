@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """Robo diario (Tarefa Agendada do Windows / cron).
-   Enfileira um job 'completo' e processa a fila -> unifica o status na tabela jobs
-   (visivel na interface). Funciona mesmo sem ninguem logado.
+   Enfileira um job 'completo'. Quem PROCESSA a fila depende de FISCAL_ROLE:
+
+   - web  : so enfileira (o worker do app.py processa). Use no EasyPanel
+            quando FISCAL_CRON=1 ja esta ligado — evita dois processos NFC-e
+            no mesmo IP (G4).
+   - cron : enfileira E processa (Tarefa Agendada no Windows, app desligado).
+   - auto : se FISCAL_CRON=1 assume web; senao cron.
 """
 import os, sys
 from datetime import datetime
@@ -17,13 +22,24 @@ def log(m):
     with open(os.path.join(LOG, 'run_diario.log'), 'a', encoding='utf-8') as f:
         f.write(linha + '\n')
 
+def _papel():
+    role = (os.environ.get('FISCAL_ROLE') or '').strip().lower()
+    if role in ('web', 'cron'):
+        return role
+    return 'web' if os.environ.get('FISCAL_CRON') == '1' else 'cron'
+
 def main():
     models.init_db()
+    papel = _papel()
     travados = worker.reconciliar_travados()
     if travados:
         log('%d job(s) orfao(s) de execucao anterior marcados como interrompidos' % travados)
-    log('===== run_diario: enfileirando job completo =====')
+    log('===== run_diario: enfileirando job completo (papel=%s) =====' % papel)
     jid = worker.enfileirar('completo', origem='agendado')
+    if papel == 'web':
+        log('papel=web: so enfileirou job#%s — o worker do app processa (nao dobra NFC-e no IP)'
+            % jid)
+        return
     n = worker.processar_fila_ate_vazia()
     with models.con() as c:
         j = c.execute('SELECT status,docs,mensagem FROM jobs WHERE id=?', (jid,)).fetchone()

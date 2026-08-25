@@ -157,7 +157,7 @@ svg{display:block}
   {% set ep = request.endpoint %}
   {% set g_fiscal = ep in ['dashboard','clientes','certificados','downloads','cliente_novo','cliente_editar'] %}
   {% set g_analises = ep in ['fiscal_conferencia','fiscal_faturamento','fiscal_auditoria','fiscal_economia','fiscal_economia_mensuracao','fiscal_economia_st','das'] %}
-  {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup'] or (ep and ep.startswith('usuario')) %}
+  {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup','sefaz_saude','sefaz_rearmar'] or (ep and ep.startswith('usuario')) %}
   <nav class="topnav">
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_fiscal }}">Fiscal <span class="car">▼</span></button>
@@ -165,9 +165,12 @@ svg{display:block}
         <a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep=='dashboard' }}">Painel</a>
         <a href="{{ url_for('clientes') }}" class="{{ 'active' if ep in ['clientes','cliente_novo','cliente_editar'] }}">Clientes</a>
         <a href="{{ url_for('certificados') }}" class="{{ 'active' if ep=='certificados' }}">Certificados</a>
+        {% if tem_perm('download') %}
         <a href="{{ url_for('downloads') }}" class="{{ 'active' if ep=='downloads' }}">Downloads</a>
+        {% endif %}
       </div>
     </div>
+    {% if tem_perm('ver_analises') %}
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_analises }}">Análises <span class="car">▼</span></button>
       <div class="submenu">
@@ -182,18 +185,28 @@ svg{display:block}
         <a href="{{ url_for('das') }}" class="{{ 'active' if ep=='das' }}">DAS</a>
       </div>
     </div>
-    {% if papel_atual == 'admin' %}
+    {% endif %}
+    {% if papel_atual == 'admin' or tem_perm('ver_execucoes') or tem_perm('ver_protocolos') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfe_saidas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
     <div class="navgroup" tabindex="0">
-      <button class="navbtn {{ 'active' if g_admin }}">Admin <span class="car">▼</span></button>
+      <button class="navbtn {{ 'active' if g_admin }}">{{ 'Admin' if papel_atual=='admin' else 'Operação' }} <span class="car">▼</span></button>
       <div class="submenu">
         <div class="sub-h">Operação</div>
+        {% if papel_atual=='admin' or tem_perm('ver_execucoes') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfe_saidas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
         <a href="{{ url_for('execucoes') }}" class="{{ 'active' if ep in ['execucoes','execucao_nova'] }}">Execuções</a>
+        {% endif %}
+        {% if papel_atual=='admin' %}
+        <a href="{{ url_for('sefaz_saude') }}" class="{{ 'active' if ep and ep.startswith('sefaz') }}">Saúde SEFAZ</a>
+        {% endif %}
+        {% if papel_atual=='admin' or tem_perm('ver_protocolos') %}
         <a href="{{ url_for('protocolos') }}" class="{{ 'active' if ep=='protocolos' }}">Protocolos</a>
+        {% endif %}
+        {% if papel_atual == 'admin' %}
         <a href="{{ url_for('configuracoes') }}" class="{{ 'active' if ep=='configuracoes' }}">Configurações</a>
         <a href="{{ url_for('backup') }}" class="{{ 'active' if ep=='backup' }}">Backup</a>
         <a href="{{ url_for('usuarios') }}" class="{{ 'active' if ep and ep.startswith('usuario') }}">Usuários</a>
         <div class="sub-h">Importações</div>
         <a href="{{ url_for('importar_pgdas') }}" class="{{ 'active' if ep=='importar_pgdas' }}">Recibo PGDAS-D</a>
+        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -226,6 +239,13 @@ svg{display:block}
 {% if session.uid and session.senha_padrao %}
 <div style="background:var(--errbg);color:var(--err);padding:10px 26px;font-size:13.5px;display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">
   ⚠️ Você ainda usa a senha padrão <b>admin / admin</b>. <a href="{{ url_for('trocar_senha') }}" style="color:var(--err);font-weight:700;text-decoration:underline">Trocar agora →</a>
+</div>
+{% endif %}
+{% if session.uid and risco_volume %}
+<div style="background:var(--errbg);color:var(--err);padding:12px 26px;font-size:13.5px;display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">
+  ⚠️ <b>Volume persistente NÃO está montado.</b> Cada “Implantar” no EasyPanel apaga empresas, execuções, XML e certificados.
+  No painel: <b>Mounts / Volumes</b> → adicionar volume <code>portal-fiscal-data</code> no destino <code>/app/data</code> → implantar de novo.
+  Depois restaure o backup em <a href="{{ url_for('backup') }}" style="color:var(--err);font-weight:700;text-decoration:underline">Admin → Backup</a>.
 </div>
 {% endif %}
 

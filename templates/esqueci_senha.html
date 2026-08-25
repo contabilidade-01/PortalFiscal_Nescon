@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block titulo %}Esqueci a senha{% endblock %}
+{% block full %}
+<style>
+.auth{min-height:100vh;display:grid;place-items:center;padding:40px;background:linear-gradient(160deg,#eef2ff,#f8fafc 55%,#e0f2fe)}
+.auth-card{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:28px 26px;box-shadow:var(--shadow-lg)}
+.auth-card h2{font-size:22px;margin:0 0 6px;letter-spacing:-.4px}
+.auth-card .sub{color:var(--sub);font-size:14px;margin:0 0 22px;line-height:1.45}
+.hint{margin-top:16px;font-size:12.5px;color:var(--sub);text-align:center}
+.hint a{color:var(--brand1);font-weight:600;text-decoration:none}
+.warn{margin-top:14px;padding:10px 12px;border-radius:10px;background:var(--errbg);color:var(--err);font-size:13px}
+</style>
+<div class="auth">
+  <div class="auth-card">
+    <h2>Recuperar senha</h2>
+    <p class="sub">Informe o login e o e-mail cadastrado. Se coincidirem, enviaremos um link de redefinição.</p>
+    {% if not smtp_ok %}
+    <div class="warn">O servidor ainda não tem SMTP configurado. Peça ao administrador para redefinir sua senha em Usuários.</div>
+    {% endif %}
+    <form method="post">
+      <label>Login</label>
+      <input name="login" autofocus required placeholder="seu usuário">
+      <label>E-mail cadastrado</label>
+      <input name="email" type="email" required placeholder="nome@empresa.com">
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:20px;padding:12px" {{ 'disabled' if not smtp_ok else '' }}>
+        Enviar link
+      </button>
+    </form>
+    <div class="hint"><a href="{{ url_for('login') }}">← Voltar ao login</a></div>
+  </div>
+</div>
+{% endblock %}

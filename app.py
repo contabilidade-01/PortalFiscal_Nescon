@@ -5,7 +5,7 @@
 """
 import os, io, re, json, zipfile, threading
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, session, flash,
                    render_template, send_file, abort, after_this_request)
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -15,6 +15,10 @@ import models
 import worker
 from engines import certs, nfe, nfse, conferencia, cfop, monofasico
 from engines import backup as bak
+from engines import mail as mailer
+from engines import guard
+import time
+from collections import defaultdict
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
@@ -41,11 +45,17 @@ worker.iniciar_worker()  # motor de jobs em background (roda mesmo sem usuario l
 
 @app.route('/healthz')
 def healthz():
-    """Healthcheck do EasyPanel/Docker — sem login."""
+    """Healthcheck do EasyPanel/Docker — sem login. Inclui diagnostico de volume."""
     try:
-        with models.con() as c:
-            c.execute('SELECT 1').fetchone()
-        return {'ok': True}, 200
+        d = models.diagnostico_persistencia()
+        return {
+            'ok': True,
+            'volume_montado': d['volume_montado'],
+            'risco_apagar_no_deploy': d['risco_apagar_no_deploy'],
+            'empresas': d['empresas'],
+            'jobs': d['jobs'],
+            'data_dir': d['data_dir'],
+        }, 200
     except Exception:
         return {'ok': False}, 503
 
@@ -70,9 +80,62 @@ def admin_required(f):
         return f(*a, **k)
     return w
 
+def perm_required(*chaves):
+    """Exige login e ao menos uma das permissoes (admin passa sempre)."""
+    def deco(f):
+        @wraps(f)
+        def w(*a, **k):
+            if 'uid' not in session:
+                return redirect(url_for('login'))
+            u = usuario_atual()
+            if not u or not any(models.tem_permissao(u, c) for c in chaves):
+                flash('Você não tem permissão para esta ação.', 'erro')
+                return redirect(url_for('dashboard'))
+            return f(*a, **k)
+        return w
+    return deco
+
 @app.context_processor
 def _inject_papel():
-    return {'papel_atual': session.get('papel')}
+    perms = set()
+    if 'uid' in session:
+        u = usuario_atual()
+        perms = models.permissoes_do_usuario(u) if u else set()
+    return {
+        'papel_atual': session.get('papel'),
+        'perms': perms,
+        'tem_perm': lambda k: k in perms,
+        'risco_volume': (models.diagnostico_persistencia().get('risco_apagar_no_deploy')
+                         if session.get('papel') == 'admin' else False),
+    }
+
+# Rate limit simples (memoria) p/ forgot-password — alinhado ao nescon-clientes
+_forgot_hits = defaultdict(list)
+
+def _rate_ok(bucket, limite=5, janela_s=900):
+    agora = time.time()
+    hits = [t for t in _forgot_hits[bucket] if agora - t < janela_s]
+    _forgot_hits[bucket] = hits
+    if len(hits) >= limite:
+        return False
+    hits.append(agora)
+    _forgot_hits[bucket] = hits
+    return True
+
+def _enfileirar_escopo(tipo, user_id=None):
+    """Admin/todas_empresas: job 'todas'. Operador com escopo: um job por CNPJ."""
+    u = usuario_atual()
+    cnpjs = models.cnpjs_visiveis(u) if u else []
+    if cnpjs is None:
+        worker.enfileirar(tipo, escopo='todas', origem='manual', user_id=user_id)
+        return 1
+    if not cnpjs:
+        return 0
+    n = 0
+    for cnpj in cnpjs:
+        worker.enfileirar(tipo, escopo=cnpj, origem='manual', user_id=user_id)
+        n += 1
+    return n
 
 def _visiveis_ids():
     """IDs de empresas que o usuario logado pode ver. None = todas (admin/todas_empresas)."""
@@ -129,6 +192,61 @@ def trocar_senha():
         session['senha_padrao'] = False
         flash('Senha alterada com sucesso.', 'ok'); return redirect(url_for('dashboard'))
     return render_template('trocar_senha.html')
+
+_MSG_FORGOT_OK = ('Se os dados coincidirem com uma conta ativa, enviaremos um link '
+                  'de recuperação para o e-mail cadastrado.')
+
+@app.route('/esqueci-senha', methods=['GET', 'POST'])
+def esqueci_senha():
+    smtp_ok = mailer.is_smtp_configured()
+    if request.method == 'POST':
+        ip = request.headers.get('X-Forwarded-For', request.remote_addr or '0').split(',')[0].strip()
+        if not _rate_ok('forgot:' + ip, limite=5, janela_s=900):
+            flash('Muitas tentativas. Aguarde alguns minutos e tente de novo.', 'erro')
+            return redirect(url_for('esqueci_senha'))
+        login = (request.form.get('login') or '').strip()
+        email = (request.form.get('email') or '').strip()
+        # Resposta generica (anti-enumeracao), igual ao nescon-clientes
+        if not smtp_ok:
+            flash('Recuperação por e-mail ainda não está configurada no servidor. '
+                  'Peça ao administrador para redefinir sua senha.', 'erro')
+            return redirect(url_for('esqueci_senha'))
+        u = models.buscar_usuario_login_email(login, email)
+        if u:
+            try:
+                token = models.criar_token_reset(u['id'])
+                base = mailer.get_public_app_url() or request.url_root.rstrip('/')
+                url = '%s%s?token=%s' % (base, url_for('redefinir_senha'), token)
+                mailer.send_password_reset_email(u['email'].strip(), url)
+            except Exception:
+                flash('Não foi possível enviar o e-mail agora. Tente mais tarde ou fale com o admin.', 'erro')
+                return redirect(url_for('esqueci_senha'))
+        flash(_MSG_FORGOT_OK, 'ok')
+        return redirect(url_for('login'))
+    return render_template('esqueci_senha.html', smtp_ok=smtp_ok)
+
+@app.route('/redefinir-senha', methods=['GET', 'POST'])
+def redefinir_senha():
+    token = (request.values.get('token') or '').strip()
+    u = models.usuario_por_token_reset(token) if token else None
+    if request.method == 'POST':
+        if not u:
+            flash('Link inválido ou expirado. Solicite um novo.', 'erro')
+            return redirect(url_for('esqueci_senha'))
+        nova = request.form.get('nova') or ''
+        conf = request.form.get('confirma') or ''
+        if len(nova) < 6:
+            flash('A nova senha deve ter ao menos 6 caracteres.', 'erro')
+            return render_template('redefinir_senha.html', token=token, ok=True)
+        if nova != conf:
+            flash('As senhas não coincidem.', 'erro')
+            return render_template('redefinir_senha.html', token=token, ok=True)
+        if models.consumir_token_reset(token, generate_password_hash(nova)):
+            flash('Senha redefinida. Entre com a nova senha.', 'ok')
+            return redirect(url_for('login'))
+        flash('Link inválido ou expirado. Solicite um novo.', 'erro')
+        return redirect(url_for('esqueci_senha'))
+    return render_template('redefinir_senha.html', token=token, ok=bool(u))
 
 def _comp_anterior():
     """(ano, mes) do mes ANTERIOR ao atual — padrao do Fiscal (apura o mes passado)."""
@@ -331,7 +449,7 @@ def cliente_excluir(eid):
 
 # ---- Modulo DAS (placeholder — expansao futura) ----
 @app.route('/das')
-@login_req
+@perm_required('ver_analises')
 def das():
     return render_template('das.html')
 
@@ -460,7 +578,8 @@ STATUS_LABEL = {
 }
 
 @app.route('/execucoes')
-@admin_required
+@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas', 'exec_nfe_saidas',
+               'exec_nfse', 'exec_nfce', 'exec_ciencia')
 def execucoes():
     with models.con() as c:
         jobs = c.execute('SELECT * FROM jobs ORDER BY id DESC LIMIT 50').fetchall()
@@ -487,21 +606,33 @@ def execucoes():
                 % (nfce_di, models.get_param('nfce_limite') or '500'),
         'ciencia': 'Só as NF-e de entrada com ciência pendente (evento 210210).',
     }
+    u = usuario_atual()
+    tipos_ok = [t for t, p in models.TIPO_PARA_PERM.items() if models.tem_permissao(u, p)]
     return render_template('execucoes.html', jobs=jobs, execs=execs, periodos=periodos,
                            tipo_label=TIPO_LABEL, status_label=STATUS_LABEL,
-                           ultimo_auto=ultimo_auto, horas_auto=horas_auto)
+                           ultimo_auto=ultimo_auto, horas_auto=horas_auto,
+                           tipos_ok=tipos_ok)
 
 @app.route('/execucoes/nova', methods=['POST'])
-@admin_required
+@login_req
 def execucao_nova():
     tipo = request.form.get('tipo', 'completo')
-    if tipo not in ('completo', 'nfe_entradas', 'nfe_saidas', 'nfse', 'nfce', 'ciencia'):
+    if tipo not in models.TIPO_PARA_PERM:
         tipo = 'completo'
-    worker.enfileirar(tipo, origem='manual', user_id=session.get('uid'))
-    flash('Execução "%s" enfileirada.' % tipo, 'ok'); return redirect(url_for('execucoes'))
+    u = usuario_atual()
+    if not models.tem_permissao(u, models.TIPO_PARA_PERM[tipo]):
+        flash('Você não tem permissão para esta rotina.', 'erro')
+        return redirect(url_for('dashboard'))
+    n = _enfileirar_escopo(tipo, user_id=session.get('uid'))
+    if n == 0:
+        flash('Nenhuma empresa no seu escopo para enfileirar.', 'erro')
+    else:
+        flash('Execução "%s" enfileirada (%d).' % (tipo, n), 'ok')
+    return redirect(url_for('execucoes') if models.tem_permissao(u, 'ver_execucoes') else url_for('dashboard'))
 
 @app.route('/jobs/<int:jid>/cancelar', methods=['POST'])
-@admin_required
+@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas', 'exec_nfe_saidas',
+               'exec_nfse', 'exec_nfce', 'exec_ciencia')
 def job_cancelar(jid):
     with models.con() as c:
         r = c.execute("UPDATE jobs SET status='cancelado', terminado=? WHERE id=? AND status='fila'",
@@ -509,9 +640,9 @@ def job_cancelar(jid):
     flash('Job cancelado.' if r else 'Não deu para cancelar (já iniciou ou terminou).', 'ok' if r else 'erro')
     return redirect(url_for('execucoes'))
 
-# ---- Protocolos da Ciencia 210210 (admin) ----
+# ---- Protocolos da Ciencia 210210 ----
 @app.route('/protocolos')
-@admin_required
+@perm_required('ver_protocolos')
 def protocolos():
     with models.con() as c:
         rows = c.execute('''SELECT cd.cnpj, cd.chNFe, cd.cStat, cd.nProt, cd.quando, e.nome
@@ -538,7 +669,8 @@ def usuario_novo():
         return _salvar_usuario(None)
     with models.con() as c:
         emp = c.execute('SELECT id,cnpj,nome FROM empresas ORDER BY nome').fetchall()
-    return render_template('usuario_form.html', u=None, empresas=emp, sel=set())
+    return render_template('usuario_form.html', u=None, empresas=emp, sel=set(),
+                           perms_sel=set(), catalogo=models.PERMISSOES)
 
 @app.route('/usuarios/<int:uid>/editar', methods=['GET', 'POST'])
 @admin_required
@@ -550,18 +682,23 @@ def usuario_editar(uid):
         sel = set(r['empresa_id'] for r in
                   c.execute('SELECT empresa_id FROM usuario_empresas WHERE user_id=?', (uid,)).fetchall())
         emp = c.execute('SELECT id,cnpj,nome FROM empresas ORDER BY nome').fetchall()
+        perms_sel = set(r['permissao'] for r in
+                        c.execute('SELECT permissao FROM usuario_permissoes WHERE user_id=?', (uid,)).fetchall())
     if request.method == 'POST':
         return _salvar_usuario(uid)
-    return render_template('usuario_form.html', u=u, empresas=emp, sel=sel)
+    return render_template('usuario_form.html', u=u, empresas=emp, sel=sel,
+                           perms_sel=perms_sel, catalogo=models.PERMISSOES)
 
 def _salvar_usuario(uid):
     f = request.form
     login = (f.get('login') or '').strip()
     nome = f.get('nome') or login
+    email = (f.get('email') or '').strip() or None
     papel = 'admin' if f.get('papel') == 'admin' else 'operador'
     ativo = 1 if f.get('ativo') else 0
     todas = 1 if (f.get('todas_empresas') or papel == 'admin') else 0
     empresas_sel = [int(x) for x in request.form.getlist('empresas')]
+    perms_sel = [x for x in request.form.getlist('permissoes') if x in models.PERM_KEYS]
     senha = f.get('senha') or ''
     with models.con() as c:
         if uid is None:
@@ -569,20 +706,24 @@ def _salvar_usuario(uid):
                 flash('Login e senha são obrigatórios.', 'erro'); return redirect(url_for('usuario_novo'))
             if c.execute('SELECT 1 FROM usuarios WHERE login=?', (login,)).fetchone():
                 flash('Já existe usuário com esse login.', 'erro'); return redirect(url_for('usuarios'))
-            cur = c.execute('INSERT INTO usuarios(login,senha_hash,nome,papel,todas_empresas,ativo,criado) '
-                            'VALUES(?,?,?,?,?,?,?)',
-                            (login, generate_password_hash(senha), nome, papel, todas, ativo,
+            cur = c.execute('INSERT INTO usuarios(login,senha_hash,nome,email,papel,todas_empresas,ativo,criado) '
+                            'VALUES(?,?,?,?,?,?,?,?)',
+                            (login, generate_password_hash(senha), nome, email, papel, todas, ativo,
                              datetime.now().isoformat(timespec='seconds')))
             uid = cur.lastrowid
         else:
-            c.execute('UPDATE usuarios SET nome=?,papel=?,todas_empresas=?,ativo=? WHERE id=?',
-                      (nome, papel, todas, ativo, uid))
+            c.execute('UPDATE usuarios SET nome=?,email=?,papel=?,todas_empresas=?,ativo=? WHERE id=?',
+                      (nome, email, papel, todas, ativo, uid))
             if senha:
                 c.execute('UPDATE usuarios SET senha_hash=? WHERE id=?', (generate_password_hash(senha), uid))
         c.execute('DELETE FROM usuario_empresas WHERE user_id=?', (uid,))
         if not todas:
             for eid in empresas_sel:
                 c.execute('INSERT OR IGNORE INTO usuario_empresas(user_id,empresa_id) VALUES(?,?)', (uid, eid))
+    if papel == 'admin':
+        models.salvar_permissoes(uid, [])  # admin ignora a tabela; limpa lixo
+    else:
+        models.salvar_permissoes(uid, perms_sel)
     flash('Usuário salvo.', 'ok'); return redirect(url_for('usuarios'))
 
 @app.route('/usuarios/<int:uid>/excluir', methods=['POST'])
@@ -596,6 +737,8 @@ def usuario_excluir(uid):
         if alvo and alvo['papel'] == 'admin' and admins <= 1:
             flash('Não é possível excluir o último administrador.', 'erro'); return redirect(url_for('usuarios'))
         c.execute('DELETE FROM usuario_empresas WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM usuario_permissoes WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM password_reset_tokens WHERE user_id=?', (uid,))
         c.execute('DELETE FROM usuarios WHERE id=?', (uid,))
     flash('Usuário excluído.', 'ok'); return redirect(url_for('usuarios'))
 
@@ -671,28 +814,44 @@ def cert_office():
 
 # ---- Execução (fila de jobs em background) ----
 @app.route('/run/nfe/entradas', methods=['POST'])
-@admin_required
+@perm_required('exec_nfe_entradas')
 def run_nfe_entradas():
-    worker.enfileirar('nfe_entradas', origem='manual', user_id=session.get('uid'))
-    flash('Entradas NF-e enfileiradas — acompanhe o status no topo.', 'ok'); return redirect(url_for('dashboard'))
+    n = _enfileirar_escopo('nfe_entradas', user_id=session.get('uid'))
+    if n == 0:
+        flash('Nenhuma empresa no seu escopo.', 'erro')
+    else:
+        flash('Entradas NF-e enfileiradas — acompanhe o status no topo.', 'ok')
+    return redirect(url_for('dashboard'))
 
 @app.route('/run/nfe/saidas', methods=['POST'])
-@admin_required
+@perm_required('exec_nfe_saidas')
 def run_nfe_saidas():
-    worker.enfileirar('nfe_saidas', origem='manual', user_id=session.get('uid'))
-    flash('Saídas NF-e enfileiradas.', 'ok'); return redirect(url_for('dashboard'))
+    n = _enfileirar_escopo('nfe_saidas', user_id=session.get('uid'))
+    if n == 0:
+        flash('Nenhuma empresa no seu escopo.', 'erro')
+    else:
+        flash('Saídas NF-e enfileiradas.', 'ok')
+    return redirect(url_for('dashboard'))
 
 @app.route('/run/nfse', methods=['POST'])
-@admin_required
+@perm_required('exec_nfse')
 def run_nfse():
-    worker.enfileirar('nfse', origem='manual', user_id=session.get('uid'))
-    flash('NFS-e enfileirada.', 'ok'); return redirect(url_for('dashboard'))
+    n = _enfileirar_escopo('nfse', user_id=session.get('uid'))
+    if n == 0:
+        flash('Nenhuma empresa no seu escopo.', 'erro')
+    else:
+        flash('NFS-e enfileirada.', 'ok')
+    return redirect(url_for('dashboard'))
 
 @app.route('/run/nfce', methods=['POST'])
-@admin_required
+@perm_required('exec_nfce')
 def run_nfce():
-    worker.enfileirar('nfce', origem='manual', user_id=session.get('uid'))
-    flash('NFC-e (SP) enfileirada — lista e baixa de todas as empresas marcadas.', 'ok'); return redirect(url_for('dashboard'))
+    n = _enfileirar_escopo('nfce', user_id=session.get('uid'))
+    if n == 0:
+        flash('Nenhuma empresa no seu escopo.', 'erro')
+    else:
+        flash('NFC-e (SP) enfileirada — lista e baixa das empresas do seu escopo.', 'ok')
+    return redirect(url_for('dashboard'))
 
 @app.route('/status')
 @login_req
@@ -723,7 +882,7 @@ def _disponivel(cnpj):
     return res
 
 @app.route('/downloads')
-@login_req
+@perm_required('download')
 def downloads():
     aplicado = request.args.get('aplicado')
     q = (request.args.get('q') or '').strip().lower()
@@ -757,7 +916,7 @@ def downloads():
 
 # ---- Download por competencia + tipo (ZIP) ----
 @app.route('/download')
-@login_req
+@perm_required('download')
 def download():
     cnpj = request.args.get('cnpj', ''); doc = request.args.get('doc', 'NFe')
     comp = request.args.get('comp', 'TODAS'); tipo = request.args.get('tipo', 'todos')
@@ -838,7 +997,7 @@ _COLS_CONF = [
 
 # ---- Etapa 9/10: Conferencia fiscal (qtd + valor) com filtros Ano/Mes/Empresa ----
 @app.route('/fiscal/conferencia')
-@login_req
+@perm_required('ver_analises')
 def fiscal_conferencia():
     with models.con() as c:
         emp_rows = _scope(c.execute('SELECT id, cnpj, nome FROM empresas ORDER BY nome').fetchall())
@@ -901,7 +1060,7 @@ def fiscal_conferencia():
 
 # ---- Etapa 9: Auditoria de numeracao (quebras de nNF) - apenas NFes EMITIDAS ----
 @app.route('/fiscal/auditoria')
-@login_req
+@perm_required('ver_analises')
 def fiscal_auditoria():
     """Auditoria por empresa CLIENTE: somente NF EMITIDAS pela propria empresa.
        - NF-e saidas (04_saida) e NFC-e vendas (01_venda): audita por nNF.
@@ -959,7 +1118,7 @@ def fiscal_auditoria():
 
 # ---- Etapa 12: Faturamento por CFOP (isola a base de tributacao) ----
 @app.route('/fiscal/faturamento')
-@login_req
+@perm_required('ver_analises')
 def fiscal_faturamento():
     with models.con() as c:
         emp_rows = _scope(c.execute('SELECT id, cnpj, nome FROM empresas ORDER BY nome').fetchall())
@@ -1010,7 +1169,7 @@ def fiscal_faturamento():
 
 # ---- Etapa 13+14: Economia Fiscal (produtos monofasicos) ----
 @app.route('/fiscal/economia')
-@login_req
+@perm_required('ver_analises')
 def fiscal_economia():
     """Dois modos:
        - modo=venda (default Etapa 13): usa as SAIDAS reais (04_saida/NFCe 01_venda) do mes escolhido.
@@ -1191,7 +1350,7 @@ def importar_pgdas():
 
 # ---- Etapa 15: Mensuracao 3-fontes (vendas + compras + extrato) ----
 @app.route('/fiscal/economia/mensuracao')
-@login_req
+@perm_required('ver_analises')
 def fiscal_economia_mensuracao():
     """Tela de mensuracao: cruza vendas + compras + extrato (3 fontes)."""
     with models.con() as c:
@@ -1242,7 +1401,7 @@ def fiscal_economia_mensuracao():
 
 # ---- Etapa 16: Receita com ICMS-ST (segregacao no Simples) ----
 @app.route('/fiscal/economia/st')
-@login_req
+@perm_required('ver_analises')
 def fiscal_economia_st():
     """Identifica receita com ICMS-ST nas saidas reais e mostra a parcela que
        pode ser SEGREGADA do DAS (LC 123 art. 13 §1o XIII 'a' + Res CGSN 140
@@ -1320,6 +1479,104 @@ def cliente_forcar_nsu(eid):
                   (flag, nsu, eid))
     flash('NSU forcado configurado (proxima execucao NFeentradas comecara em %s).' % nsu, 'ok')
     return redirect(url_for('clientes'))
+
+
+def _sefaz_relativo(ate):
+    if not ate:
+        return '—'
+    try:
+        alvo = datetime.strptime(str(ate)[:19], '%Y-%m-%d %H:%M:%S')
+    except (TypeError, ValueError):
+        return ate
+    s = int((alvo - datetime.now()).total_seconds())
+    if s <= 0:
+        return 'já liberou'
+    if s < 60:
+        return '%ds' % s
+    if s < 3600:
+        return '%d min' % (s // 60)
+    return '%dh %dmin' % (s // 3600, (s % 3600) // 60)
+
+@app.route('/sefaz/saude')
+@admin_required
+def sefaz_saude():
+    models.init_db()
+    agora_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    desde_24h = (datetime.now() - timedelta(hours=24)).strftime('%Y-%m-%d %H:%M:%S')
+    desde_7d = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M:%S')
+    with models.con() as c:
+        emps = c.execute('''SELECT id,cnpj,nome,bloqueado_nfe_ate,bloqueado_nfce_ate,bloqueado_nfse_ate,
+                                   bloqueios_seguidos_nfe,bloqueios_seguidos_nfce,bloqueios_seguidos_nfse,
+                                   circuito_nfe,circuito_nfce,circuito_nfse,ultimo_bloqueio_motivo,ativo
+                            FROM empresas WHERE ativo=1 ORDER BY nome''').fetchall()
+        ocorr = c.execute('''SELECT * FROM ocorrencias_sefaz ORDER BY id DESC LIMIT 200''').fetchall()
+        k24 = c.execute('''SELECT tipo, COUNT(*) n FROM ocorrencias_sefaz
+                           WHERE quando>=? GROUP BY tipo''', (desde_24h,)).fetchall()
+        k7 = c.execute('''SELECT tipo, COUNT(*) n FROM ocorrencias_sefaz
+                          WHERE quando>=? GROUP BY tipo''', (desde_7d,)).fetchall()
+        top = c.execute('''SELECT cnpj, nome, COUNT(*) n FROM ocorrencias_sefaz
+                           WHERE tipo IN ('656','429','circuito') AND quando>=?
+                           GROUP BY cnpj ORDER BY n DESC LIMIT 8''', (desde_7d,)).fetchall()
+    cards = []
+    bloqueados = []
+    for e in emps:
+        estados = []
+        for serv, ate_k, circ_k, seg_k, rotulo in (
+            ('distNSU', 'bloqueado_nfe_ate', 'circuito_nfe', 'bloqueios_seguidos_nfe', 'NF-e / Ciência'),
+            ('nfce', 'bloqueado_nfce_ate', 'circuito_nfce', 'bloqueios_seguidos_nfce', 'NFC-e'),
+            ('nfse', 'bloqueado_nfse_ate', 'circuito_nfse', 'bloqueios_seguidos_nfse', 'NFS-e'),
+        ):
+            circ = int(e[circ_k] or 0)
+            ate = e[ate_k]
+            em_cd = bool(ate) and agora_s < str(ate)
+            if circ:
+                cor = 'vermelho'
+            elif em_cd:
+                cor = 'amarelo'
+            else:
+                cor = 'verde'
+            est = dict(servico=serv, rotulo=rotulo, cor=cor, ate=ate,
+                       libera=_sefaz_relativo(ate) if em_cd else ('rearme' if circ else 'livre'),
+                       seguidos=int(e[seg_k] or 0), circ=circ)
+            estados.append(est)
+            if cor != 'verde':
+                bloqueados.append(dict(cnpj=e['cnpj'], nome=e['nome'], **est))
+        pior = 'verde'
+        if any(x['cor'] == 'vermelho' for x in estados):
+            pior = 'vermelho'
+        elif any(x['cor'] == 'amarelo' for x in estados):
+            pior = 'amarelo'
+        cards.append(dict(cnpj=e['cnpj'], nome=e['nome'], cor=pior, estados=estados,
+                          motivo=e['ultimo_bloqueio_motivo'] or ''))
+    office_cnpj = models.get_param('office_cnpj') or ''
+    saida = dict(
+        circuito=models.get_param('circuito_saida') == '1',
+        ate=models.get_param('bloqueado_saida_ate') or '',
+        seguidos=int(models.get_param('bloqueios_seguidos_saida') or '0'),
+    )
+    if saida['circuito'] or (saida['ate'] and agora_s < saida['ate']):
+        bloqueados.insert(0, dict(
+            cnpj=office_cnpj or 'escritorio', nome='Escritório (saídas autXML)',
+            servico='saida', rotulo='Saídas NF-e', cor='vermelho' if saida['circuito'] else 'amarelo',
+            ate=saida['ate'], libera='rearme' if saida['circuito'] else _sefaz_relativo(saida['ate']),
+            seguidos=saida['seguidos'], circ=1 if saida['circuito'] else 0))
+    def _mapa(rows):
+        return {r['tipo']: r['n'] for r in rows}
+    m24, m7 = _mapa(k24), _mapa(k7)
+    max_top = max([t['n'] for t in top] or [1])
+    return render_template('sefaz_saude.html', cards=cards, bloqueados=bloqueados, ocorr=ocorr,
+                           m24=m24, m7=m7, top=top, max_top=max_top, saida=saida,
+                           office_cnpj=office_cnpj, limiar=guard.CIRCUITO_LIMIAR,
+                           guard_ativo=guard.GUARD_ATIVO)
+
+@app.route('/sefaz/rearmar/<cnpj>/<servico>', methods=['POST'])
+@admin_required
+def sefaz_rearmar(cnpj, servico):
+    if servico not in ('distNSU', 'ciencia', 'nfce', 'nfse', 'saida'):
+        flash('Serviço inválido.', 'erro'); return redirect(url_for('sefaz_saude'))
+    guard.rearmar(cnpj, servico, quem=session.get('nome') or session.get('uid'))
+    flash('Circuito rearmado: %s / %s.' % (cnpj, servico), 'ok')
+    return redirect(url_for('sefaz_saude'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=CFG.get('porta', 5001), debug=False)

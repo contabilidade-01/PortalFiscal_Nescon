@@ -1,0 +1,36 @@
+{% extends 'base.html' %}
+{% block titulo %}Nova senha{% endblock %}
+{% block full %}
+<style>
+.auth{min-height:100vh;display:grid;place-items:center;padding:40px;background:linear-gradient(160deg,#eef2ff,#f8fafc 55%,#e0f2fe)}
+.auth-card{width:100%;max-width:400px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:28px 26px;box-shadow:var(--shadow-lg)}
+.auth-card h2{font-size:22px;margin:0 0 6px;letter-spacing:-.4px}
+.auth-card .sub{color:var(--sub);font-size:14px;margin:0 0 22px;line-height:1.45}
+.hint{margin-top:16px;font-size:12.5px;color:var(--sub);text-align:center}
+.hint a{color:var(--brand1);font-weight:600;text-decoration:none}
+.warn{margin-top:8px;padding:10px 12px;border-radius:10px;background:var(--errbg);color:var(--err);font-size:13px}
+</style>
+<div class="auth">
+  <div class="auth-card">
+    <h2>Definir nova senha</h2>
+    {% if not ok %}
+    <p class="sub">Este link é inválido ou já expirou.</p>
+    <div class="warn">Solicite um novo link em “Esqueci minha senha”.</div>
+    <div class="hint"><a href="{{ url_for('esqueci_senha') }}">Pedir novo link</a> · <a href="{{ url_for('login') }}">Login</a></div>
+    {% else %}
+    <p class="sub">Escolha uma senha com pelo menos 6 caracteres.</p>
+    <form method="post">
+      <input type="hidden" name="token" value="{{ token }}">
+      <label>Nova senha</label>
+      <input name="nova" type="password" autofocus required minlength="6" placeholder="••••••••">
+      <label>Confirmar senha</label>
+      <input name="confirma" type="password" required minlength="6" placeholder="••••••••">
+      <button class="btn btn-primary" style="width:100%;justify-content:center;margin-top:20px;padding:12px">
+        Salvar senha
+      </button>
+    </form>
+    <div class="hint"><a href="{{ url_for('login') }}">← Voltar ao login</a></div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

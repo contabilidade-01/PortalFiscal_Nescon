@@ -6,27 +6,46 @@ import os, re, json, time, base64, gzip, http.client
 from datetime import datetime
 import models
 from engines import certs
-from engines.pausa import NFE_ESPERA, NFE_COOLDOWN_MIN, cooldown_ate, em_cooldown, nsu15
+from engines import guard
+from engines.pausa import NFE_ESPERA, nsu15
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
 SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG['pasta_saida_xml']; NFE = CFG['nfe']
 HOST = 'www1.nfe.fazenda.gov.br'; PATH = '/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx'
 ACTION = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse'
+TPAMB = os.environ.get('FISCAL_TPAMB', '1')  # 1=Producao (default) | 2=Homologacao
 
 def _soap(cuf, cnpj, inner):
     return ('<soap12:Envelope xmlns:soap12="http://www.w3.org/2003/05/soap-envelope"><soap12:Body>'
             '<nfeDistDFeInteresse xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe"><nfeDadosMsg>'
-            '<distDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>1</tpAmb>'
+            '<distDFeInt xmlns="http://www.portalfiscal.inf.br/nfe" versao="1.01"><tpAmb>%s</tpAmb>'
             '<cUFAutor>%s</cUFAutor><CNPJ>%s</CNPJ>%s'
-            '</distDFeInt></nfeDadosMsg></nfeDistDFeInteresse></soap12:Body></soap12:Envelope>') % (cuf, cnpj, inner)
+            '</distDFeInt></nfeDadosMsg></nfeDistDFeInteresse></soap12:Body></soap12:Envelope>') % (TPAMB, cuf, cnpj, inner)
 
 def _post(ctx, cuf, cnpj, inner):
-    conn = http.client.HTTPSConnection(HOST, 443, context=ctx, timeout=90)
-    conn.request('POST', PATH, body=_soap(cuf, cnpj, inner).encode('utf-8'),
-                 headers={'Content-Type': 'application/soap+xml; charset=utf-8; action="%s"' % ACTION})
-    r = conn.getresponse(); d = r.read().decode('utf-8', 'replace'); conn.close()
-    return r.status, d
+    """POST SOAP com retry + backoff em 5xx/rede (nao conta como consumo indevido)."""
+    last = None
+    for tentativa in range(3):
+        try:
+            conn = http.client.HTTPSConnection(HOST, 443, context=ctx, timeout=90)
+            conn.request('POST', PATH, body=_soap(cuf, cnpj, inner).encode('utf-8'),
+                         headers={'Content-Type': 'application/soap+xml; charset=utf-8; action="%s"' % ACTION})
+            r = conn.getresponse(); d = r.read().decode('utf-8', 'replace'); conn.close()
+            if r.status >= 500 and tentativa < 2:
+                time.sleep(2 * (2 ** tentativa))
+                last = (r.status, d)
+                continue
+            return r.status, d
+        except (http.client.HTTPException, OSError, TimeoutError) as e:
+            last = e
+            if tentativa < 2:
+                time.sleep(2 * (2 ** tentativa))
+                continue
+            raise
+    if isinstance(last, tuple):
+        return last
+    raise last
 
 def _campo(b, t):
     m = re.search(r'<%s>([^<]+)</%s>' % (t, t), b); return m.group(1) if m else ''
@@ -109,8 +128,12 @@ def puxar_entradas(emp):
         usou_forcado = True
         with models.con() as c:
             c.execute('UPDATE empresas SET forcar_nsu_nfe=0 WHERE id=?', (emp['id'],))
-    if em_cooldown(emp['bloqueado_nfe_ate']):
-        return 0, 'cooldown'
+        models.registrar_consulta(cnpj, 'forcar_nsu')  # auditoria O-2
+    d0 = guard.pode(cnpj, 'distNSU')
+    if not d0.liberado:
+        if d0.parada == 'limite':
+            guard.registrar_bloqueio(cnpj, 'distNSU', 'limite', nome=emp['nome'])
+        return 0, d0.parada or 'cooldown'
     if not emp['arquivo']:
         return 0, 'sem_certificado'
     try: ctx, tmp = certs.ssl_ctx(emp['arquivo'], emp['senha'])
@@ -119,6 +142,12 @@ def puxar_entradas(emp):
     try:
         while lote < NFE['max_lotes_por_run']:
             lote += 1
+            d = guard.pode(cnpj, 'distNSU')
+            if not d.liberado:
+                parada = d.parada or 'cooldown'
+                if parada == 'limite':
+                    guard.registrar_bloqueio(cnpj, 'distNSU', 'limite', nome=emp['nome'])
+                break
             models.registrar_consulta(cnpj, 'distNSU')
             st, b = _post(ctx, cuf, cnpj, '<distNSU><ultNSU>%s</ultNSU></distNSU>' % ult)
             if st != 200: parada = 'http_%d' % st; break
@@ -136,22 +165,25 @@ def puxar_entradas(emp):
                 if _campo(b, 'ultNSU'):
                     ult = nu
                 break
-            elif cS == '108':
-                parada = '108'; break
+            elif cS in ('108', '109'):
+                parada = cS; break
             else:
                 parada = 'cStat_%s' % cS; break
-            time.sleep(NFE_ESPERA)
+            guard.sleep_jitter(NFE_ESPERA)
     finally:
         for f in tmp:
             try: os.remove(f)
             except Exception: pass
-    bloq = cooldown_ate(NFE_COOLDOWN_MIN) if parada in ('137', '656', 'fim', '108') else None
     with models.con() as c:
-        c.execute('UPDATE empresas SET ultnsu_nfe=?, ultima_exec_nfe=?, total_nfe=total_nfe+?, bloqueado_nfe_ate=? WHERE id=?',
-                  (ult, datetime.now().strftime('%Y-%m-%d %H:%M'), total, bloq, emp['id']))
+        c.execute('UPDATE empresas SET ultnsu_nfe=?, ultima_exec_nfe=?, total_nfe=total_nfe+? WHERE id=?',
+                  (ult, datetime.now().strftime('%Y-%m-%d %H:%M'), total, emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfe_entrada', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada,
-                   'ultNSU=%s%s' % (ult, ' [forcado]' if usou_forcado else '')))
+                   'ultNSU=%s maxNSU=%s%s' % (ult, maxn, ' [forcado]' if usou_forcado else '')))
+    if parada in ('137', '656', 'fim', '108', '109'):
+        guard.registrar_bloqueio(cnpj, 'distNSU', parada, nome=emp['nome'])
+    elif parada in ('cap', 'ok') or total:
+        guard.registrar_ok(cnpj, 'distNSU')
     return total, parada
 
 def puxar_saidas_escritorio():
@@ -160,15 +192,21 @@ def puxar_saidas_escritorio():
     sen = models.get_param('office_senha'); cuf = models.get_param('office_cuf') or '35'
     ult = nsu15(models.get_param('ultnsu_saida') or '000000000000000')
     if not (office and arq and sen): return 0, 'escritorio_nao_configurado'
-    bloq = models.get_param('bloqueado_saida_ate')
-    if em_cooldown(bloq):
-        return 0, 'cooldown'
+    d0 = guard.pode(office, 'saida')
+    if not d0.liberado:
+        return 0, d0.parada or 'cooldown'
     try: ctx, tmp = certs.ssl_ctx(arq, sen)
     except Exception as e: return 0, 'erro_cert:%s' % str(e)[:40]
     total = 0; lote = 0; parada = 'cap'; maxn = '0'
     try:
         while lote < NFE['max_lotes_por_run']:
             lote += 1
+            d = guard.pode(office, 'saida')
+            if not d.liberado:
+                parada = d.parada or 'cooldown'
+                if parada == 'limite':
+                    guard.registrar_bloqueio(office, 'saida', 'limite', nome='ESCRITORIO')
+                break
             models.registrar_consulta(office, 'distNSU')
             st, b = _post(ctx, cuf, office, '<distNSU><ultNSU>%s</ultNSU></distNSU>' % ult)
             if st != 200: parada = 'http_%d' % st; break
@@ -179,24 +217,27 @@ def puxar_saidas_escritorio():
                 ult = nu; models.set_param('ultnsu_saida', ult)
                 if maxn and int(nu) >= int(maxn): parada = 'fim'; break
             elif cS == '137':
-                parada = '137'; models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
+                parada = '137'; break
             elif cS == '656':
                 parada = '656'
                 if _campo(b, 'ultNSU'):
                     ult = nu; models.set_param('ultnsu_saida', ult)
-                models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
-            elif cS == '108':
-                parada = '108'; models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN)); break
+                break
+            elif cS in ('108', '109'):
+                parada = cS; break
             else:
                 parada = 'cStat_%s' % cS; break
-            time.sleep(NFE_ESPERA)
+            guard.sleep_jitter(NFE_ESPERA)
     finally:
         for f in tmp:
             try: os.remove(f)
             except Exception: pass
-    if parada == 'fim':
-        models.set_param('bloqueado_saida_ate', cooldown_ate(NFE_COOLDOWN_MIN))
+    if parada in ('137', '656', 'fim', '108', '109'):
+        guard.registrar_bloqueio(office, 'saida', parada, nome='ESCRITORIO')
+    elif parada in ('cap', 'ok') or total:
+        guard.registrar_ok(office, 'saida')
     with models.con() as c:
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
-                  ('nfe_saida', office, 'ESCRITORIO', datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada, 'ultNSU=%s' % ult))
+                  ('nfe_saida', office, 'ESCRITORIO', datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada,
+                   'ultNSU=%s maxNSU=%s' % (ult, maxn)))
     return total, parada

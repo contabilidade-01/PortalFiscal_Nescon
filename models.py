@@ -1,14 +1,38 @@
 # -*- coding: utf-8 -*-
 """Portal Fiscal Nescon - camada de dados.
    - empresas: base UNICA (NFe + NFSe), flags por cliente.
-   - usuarios + usuario_empresas: RBAC (admin/operador, escopo por empresa).
+   - usuarios + usuario_empresas + usuario_permissoes: RBAC.
+   - password_reset_tokens: recuperacao de senha (hash + validade).
    - jobs: fila de execucoes em background com status persistente.
    - consultas_log: controle anti-bloqueio (limites por CNPJ/certificado).
    DATA_DIR (env FISCAL_DATA_DIR) separa DADOS do CODIGO -> volume em producao.
 """
-import os, sqlite3
+import os, sqlite3, secrets, hashlib
 from datetime import datetime, timedelta
 from werkzeug.security import generate_password_hash
+
+# Rotinas que o admin pode liberar para operadores (admin tem todas sempre).
+PERMISSOES = [
+    ('exec_nfe_entradas', 'Puxar NF-e entradas (compras)'),
+    ('exec_nfe_saidas', 'Puxar NF-e saídas (vendas)'),
+    ('exec_nfse', 'Puxar NFS-e'),
+    ('exec_nfce', 'Puxar NFC-e'),
+    ('exec_ciencia', 'Rodar Ciência 210210'),
+    ('exec_completo', 'Busca completa (todas as rotinas)'),
+    ('ver_execucoes', 'Acompanhar tela de Execuções'),
+    ('ver_protocolos', 'Ver Protocolos da Ciência'),
+    ('ver_analises', 'Análises fiscais (conferência, faturamento…)'),
+    ('download', 'Baixar XML por competência'),
+]
+PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
+TIPO_PARA_PERM = {
+    'nfe_entradas': 'exec_nfe_entradas',
+    'nfe_saidas': 'exec_nfe_saidas',
+    'nfse': 'exec_nfse',
+    'nfce': 'exec_nfce',
+    'ciencia': 'exec_ciencia',
+    'completo': 'exec_completo',
+}
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get('FISCAL_DATA_DIR', BASE)
@@ -61,6 +85,19 @@ def init_db():
         CREATE TABLE IF NOT EXISTS usuario_empresas(
           user_id INTEGER, empresa_id INTEGER, PRIMARY KEY(user_id, empresa_id));
 
+        -- RBAC: rotinas liberadas para operadores (admin ignora esta tabela)
+        CREATE TABLE IF NOT EXISTS usuario_permissoes(
+          user_id INTEGER, permissao TEXT, PRIMARY KEY(user_id, permissao));
+
+        -- Recuperacao de senha (guarda so hash do token)
+        CREATE TABLE IF NOT EXISTS password_reset_tokens(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          user_id INTEGER NOT NULL,
+          token_hash TEXT NOT NULL UNIQUE,
+          expires_at TEXT NOT NULL,
+          used_at TEXT,
+          criado TEXT NOT NULL);
+
         -- FILA DE JOBS (execucoes em background, status persistente)
         CREATE TABLE IF NOT EXISTS jobs(
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,10 +146,24 @@ def init_db():
           UNIQUE(empresa_id,hash_linha));
         CREATE INDEX IF NOT EXISTS idx_extrato_emp_data ON extrato_lancamentos(empresa_id, data);
         CREATE INDEX IF NOT EXISTS idx_extrato_categoria ON extrato_lancamentos(empresa_id, categoria);
+
+        -- Anti-ban: historico de 656/429/108/109/circuito (tela Saude SEFAZ)
+        CREATE TABLE IF NOT EXISTS ocorrencias_sefaz(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cnpj TEXT, nome TEXT, servico TEXT,
+          cstat TEXT, xmotivo TEXT, tipo TEXT,
+          quando TEXT, bloqueado_ate TEXT,
+          bloqueios_seguidos INTEGER, resolvido INTEGER DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS idx_ocorr_cnpj ON ocorrencias_sefaz(cnpj, quando);
+
+        -- Cadencia NFC-e (e outros) compartilhada entre processos
+        CREATE TABLE IF NOT EXISTS rate_gate(
+          servico TEXT PRIMARY KEY, proximo_permitido_em TEXT);
         ''')
         # migracoes de colunas novas em bancos antigos
         _add_col(c, 'usuarios', 'todas_empresas', 'todas_empresas INTEGER DEFAULT 0')
         _add_col(c, 'usuarios', 'ativo', 'ativo INTEGER DEFAULT 1')
+        _add_col(c, 'usuarios', 'email', 'email TEXT')
         _add_col(c, 'ciencia_dada', 'nProt', 'nProt TEXT')  # protocolo da Ciencia
         # NFC-e SP (modelo 65 - varejo)
         _add_col(c, 'empresas', 'puxa_nfce', 'puxa_nfce INTEGER DEFAULT 0')
@@ -132,6 +183,14 @@ def init_db():
         # Anti-656 NFC-e + retomada agendada no worker (servidor)
         _add_col(c, 'empresas', 'bloqueado_nfce_ate', 'bloqueado_nfce_ate TEXT')
         _add_col(c, 'jobs', 'agendado_para', 'agendado_para TEXT')
+        # Circuit breaker anti-ban permanente (~50x656 na SEFAZ; disjuntor local em 5)
+        _add_col(c, 'empresas', 'bloqueios_seguidos_nfe', 'bloqueios_seguidos_nfe INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'bloqueios_seguidos_nfce', 'bloqueios_seguidos_nfce INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'bloqueios_seguidos_nfse', 'bloqueios_seguidos_nfse INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'circuito_nfe', 'circuito_nfe INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'circuito_nfce', 'circuito_nfce INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'circuito_nfse', 'circuito_nfse INTEGER DEFAULT 0')
+        _add_col(c, 'empresas', 'ultimo_bloqueio_motivo', 'ultimo_bloqueio_motivo TEXT')
         # admin inicial (senha vem de env em producao; local usa admin/admin)
         if not c.execute('SELECT 1 FROM usuarios LIMIT 1').fetchone():
             senha_inicial = os.environ.get('ADMIN_SENHA_INICIAL', 'admin')
@@ -139,6 +198,23 @@ def init_db():
                       'VALUES(?,?,?,?,1,1,?)',
                       ('admin', generate_password_hash(senha_inicial), 'Administrador', 'admin',
                        datetime.now().isoformat(timespec='seconds')))
+        # Migracao unica: operadores existentes recebem download + analises
+        # (comportamento anterior a RBAC por rotina). Rodada so se a tabela
+        # de permissoes ainda estiver vazia.
+        if not c.execute('SELECT 1 FROM usuario_permissoes LIMIT 1').fetchone():
+            for op in c.execute("SELECT id FROM usuarios WHERE papel!='admin'").fetchall():
+                for k in ('download', 'ver_analises'):
+                    c.execute('INSERT OR IGNORE INTO usuario_permissoes(user_id,permissao) VALUES(?,?)',
+                              (op['id'], k))
+        # Operadores ja existentes: preserva leitura basica (download + analises)
+        # se ainda nao tiverem nenhuma permissao cadastrada.
+        for op in c.execute("SELECT id FROM usuarios WHERE papel!='admin'").fetchall():
+            n = c.execute('SELECT COUNT(*) FROM usuario_permissoes WHERE user_id=?',
+                          (op['id'],)).fetchone()[0]
+            if n == 0:
+                for k in ('download', 'ver_analises'):
+                    c.execute('INSERT OR IGNORE INTO usuario_permissoes(user_id,permissao) VALUES(?,?)',
+                              (op['id'], k))
 
 # ---------- RBAC ----------
 def empresas_visiveis_ids(user):
@@ -152,6 +228,110 @@ def empresas_visiveis_ids(user):
 def pode_ver_empresa(user, empresa_id):
     ids = empresas_visiveis_ids(user)
     return ids is None or empresa_id in ids
+
+def permissoes_do_usuario(user):
+    """Set de chaves de permissao. Admin = todas."""
+    if not user:
+        return set()
+    if user['papel'] == 'admin':
+        return set(PERM_KEYS)
+    with con() as c:
+        rows = c.execute('SELECT permissao FROM usuario_permissoes WHERE user_id=?',
+                         (user['id'],)).fetchall()
+    return {r['permissao'] for r in rows if r['permissao'] in PERM_KEYS}
+
+def tem_permissao(user, chave):
+    if not user or not chave:
+        return False
+    if user['papel'] == 'admin':
+        return True
+    return chave in permissoes_do_usuario(user)
+
+def salvar_permissoes(user_id, chaves):
+    """Substitui o conjunto de permissoes do operador."""
+    validas = [k for k in chaves if k in PERM_KEYS]
+    with con() as c:
+        c.execute('DELETE FROM usuario_permissoes WHERE user_id=?', (user_id,))
+        for k in validas:
+            c.execute('INSERT OR IGNORE INTO usuario_permissoes(user_id,permissao) VALUES(?,?)',
+                      (user_id, k))
+
+def cnpjs_visiveis(user):
+    """Lista de CNPJs no escopo do usuario. None = todas."""
+    ids = empresas_visiveis_ids(user)
+    if ids is None:
+        return None
+    if not ids:
+        return []
+    with con() as c:
+        rows = c.execute(
+            'SELECT cnpj FROM empresas WHERE id IN (%s)' % ','.join('?' * len(ids)),
+            ids).fetchall()
+    return [r['cnpj'] for r in rows]
+
+# ---------- Recuperacao de senha ----------
+def _hash_token(token):
+    return hashlib.sha256(token.encode('utf-8')).hexdigest()
+
+def reset_expiry_minutes():
+    try:
+        m = int(os.environ.get('PASSWORD_RESET_EXPIRY_MINUTES', '60'))
+    except ValueError:
+        m = 60
+    return max(5, min(m, 60 * 24 * 7))
+
+def criar_token_reset(user_id):
+    """Invalida tokens anteriores, cria um novo. Retorna o token em claro (so para o e-mail)."""
+    token = secrets.token_hex(32)
+    th = _hash_token(token)
+    agora = datetime.now()
+    exp = agora + timedelta(minutes=reset_expiry_minutes())
+    with con() as c:
+        c.execute('UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL',
+                  (agora.strftime('%Y-%m-%d %H:%M:%S'), user_id))
+        c.execute('INSERT INTO password_reset_tokens(user_id,token_hash,expires_at,criado) VALUES(?,?,?,?)',
+                  (user_id, th, exp.strftime('%Y-%m-%d %H:%M:%S'),
+                   agora.strftime('%Y-%m-%d %H:%M:%S')))
+    return token
+
+def usuario_por_token_reset(token):
+    """Retorna row do usuario se o token for valido; senao None."""
+    if not token or len(token) < 16:
+        return None
+    th = _hash_token(token)
+    agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with con() as c:
+        row = c.execute('''SELECT u.* FROM password_reset_tokens t
+                           JOIN usuarios u ON u.id=t.user_id
+                           WHERE t.token_hash=? AND t.used_at IS NULL AND t.expires_at>=?
+                             AND u.ativo=1''', (th, agora)).fetchone()
+    return row
+
+def consumir_token_reset(token, nova_senha_hash):
+    """Marca token usado e atualiza a senha. True se ok."""
+    th = _hash_token(token)
+    agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with con() as c:
+        t = c.execute('''SELECT * FROM password_reset_tokens
+                         WHERE token_hash=? AND used_at IS NULL AND expires_at>=?''',
+                      (th, agora)).fetchone()
+        if not t:
+            return False
+        c.execute('UPDATE usuarios SET senha_hash=? WHERE id=?', (nova_senha_hash, t['user_id']))
+        c.execute('UPDATE password_reset_tokens SET used_at=? WHERE id=?', (agora, t['id']))
+    return True
+
+def buscar_usuario_login_email(login, email):
+    """Match case-insensitive de login + e-mail cadastrado (ativos)."""
+    login = (login or '').strip()
+    email = (email or '').strip().lower()
+    if not login or not email or '@' not in email:
+        return None
+    with con() as c:
+        row = c.execute(
+            'SELECT * FROM usuarios WHERE login=? AND ativo=1 AND lower(trim(coalesce(email,\'\')))=?',
+            (login, email)).fetchone()
+    return row
 
 # ---------- Ciencia ----------
 def ciencia_ja(cnpj, ch):
@@ -175,7 +355,16 @@ def set_param(chave, valor):
                   'ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor', (chave, valor))
 
 # ---------- Anti-bloqueio (controle de consultas) ----------
-LIMITES = {'distNSU': (20, 60), 'consChNFe': (10, 60), 'nfse': (20, 60)}  # (qtd, minutos)
+# distNSU oficial ~600/5min por certificado; usamos metade (300/5min) de folga.
+# consChNFe: o portal nao consulta por chave hoje — reserva.
+LIMITES = {'distNSU': (300, 5), 'consChNFe': (10, 60), 'nfse': (40, 5)}  # (qtd, minutos)
+try:
+    import json as _json
+    _ab = (_json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8')).get('antiban') or {})
+    if _ab.get('distnsu_limite_qtd'):
+        LIMITES['distNSU'] = (int(_ab['distnsu_limite_qtd']), int(_ab.get('distnsu_limite_min', 5)))
+except Exception:
+    pass
 
 def pode_consultar(cnpj, servico='distNSU'):
     """True se ainda esta dentro do limite/hora para aquele CNPJ+servico."""
@@ -190,6 +379,45 @@ def registrar_consulta(cnpj, servico='distNSU'):
     with con() as c:
         c.execute('INSERT INTO consultas_log(cnpj,servico,quando) VALUES(?,?,?)',
                   (cnpj, servico, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+
+def diagnostico_persistencia():
+    """No Docker, dados em /app/data so sobrevivem ao deploy se houver VOLUME montado.
+    Sem mount, cada 'Implantar' no EasyPanel zera banco, XML e certificados."""
+    data = os.path.abspath(DATA_DIR)
+    in_container = os.path.exists('/.dockerenv') or os.environ.get('FISCAL_DATA_DIR') == '/app/data'
+    mounted = False
+    try:
+        if os.path.ismount(data):
+            mounted = True
+        else:
+            parent = os.path.dirname(data.rstrip(os.sep)) or os.sep
+            mounted = os.stat(data).st_dev != os.stat(parent).st_dev
+        if not mounted and os.path.isfile('/proc/self/mountinfo'):
+            with open('/proc/self/mountinfo', encoding='utf-8', errors='ignore') as f:
+                txt = f.read()
+            mounted = (' %s ' % data) in txt or txt.find(' ' + data + '\n') >= 0 or txt.rstrip().endswith(' ' + data)
+    except OSError:
+        mounted = False
+    n_emp = n_jobs = 0
+    db_bytes = 0
+    try:
+        if os.path.isfile(DB):
+            db_bytes = os.path.getsize(DB)
+        with con() as c:
+            n_emp = c.execute('SELECT COUNT(*) FROM empresas').fetchone()[0]
+            n_jobs = c.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
+    except Exception:
+        pass
+    return {
+        'data_dir': data,
+        'db': DB,
+        'in_container': bool(in_container),
+        'volume_montado': bool(mounted),
+        'risco_apagar_no_deploy': bool(in_container and not mounted),
+        'empresas': n_emp,
+        'jobs': n_jobs,
+        'db_bytes': db_bytes,
+    }
 
 if __name__ == '__main__':
     init_db()

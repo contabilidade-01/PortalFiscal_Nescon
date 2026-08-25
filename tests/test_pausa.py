@@ -27,10 +27,12 @@ def test_janela_nfce_dentro_do_teto():
 
 def test_delay_retomada():
     assert delay_retomada('cap') == 15
-    assert delay_retomada('limite') == 90
+    assert delay_retomada('limite', motor='nfce') == 90
+    assert delay_retomada('limite', motor='nfe') == 60
     assert delay_retomada('fim') is None
     assert delay_retomada('137') is None
     assert delay_retomada('656') == 65 * 60
+    assert delay_retomada('109') == 65 * 60
 
 def test_em_cooldown():
     assert em_cooldown(None) is False
@@ -41,8 +43,10 @@ def test_retomar_conjunto():
     assert 'cap' in RETOMAR
     assert 'limite' in RETOMAR
     assert '656' in RETOMAR
+    assert '109' in RETOMAR
     assert '137' not in RETOMAR
     assert 'fim' not in RETOMAR
+    assert 'circuito_aberto' not in RETOMAR
 
 if __name__ == '__main__':
     test_nsu15()

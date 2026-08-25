@@ -1,0 +1,138 @@
+{% extends 'base.html' %}
+{% block titulo %}Saúde SEFAZ{% endblock %}
+{% block corpo %}
+<style>
+.sema{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.scard{border:1px solid var(--line);border-radius:14px;padding:12px 14px;background:var(--surface2)}
+.scard b{display:block;font-size:13.5px;letter-spacing:-.2px}
+.scard .cn{font-size:11px;color:var(--muted);font-family:ui-monospace,Consolas,monospace;margin-top:2px}
+.dotg,.dota,.dotr{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle}
+.dotg{background:#22c55e}.dota{background:#f59e0b}.dotr{background:#ef4444}
+.bar{height:8px;border-radius:20px;background:var(--surface);border:1px solid var(--line);overflow:hidden}
+.bar>i{display:block;height:100%;background:linear-gradient(90deg,var(--brand1),var(--brand2))}
+.kpi3{display:flex;gap:14px;flex-wrap:wrap;margin:8px 0 4px}
+.kpi3 .k{flex:1;min-width:120px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--surface2)}
+.kpi3 .k b{font-size:22px;letter-spacing:-.6px}
+.kpi3 .k span{display:block;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+</style>
+<meta http-equiv="refresh" content="30">
+
+<div class="card">
+  <div class="between">
+    <div>
+      <h2 style="margin:0">Saúde SEFAZ</h2>
+      <p class="desc" style="margin:6px 0 0">Quem está bloqueado, até quando e por quê. Atualiza a cada 30s.
+        {% if not guard_ativo %}<b>Controlador desligado</b> (SEFAZ_GUARD_ATIVO=0).{% endif %}
+        Circuito abre após <b>{{ limiar }}</b> bloqueios 656/429 seguidos.</p>
+    </div>
+    <a href="{{ url_for('execucoes') }}" class="btn btn-ghost sm">Ver execuções</a>
+  </div>
+  <div class="kpi3">
+    <div class="k"><b>{{ m24.get('656',0) }}</b><span>656 · 24h</span></div>
+    <div class="k"><b>{{ m24.get('429',0) }}</b><span>429 · 24h</span></div>
+    <div class="k"><b>{{ m24.get('circuito',0) }}</b><span>circuito · 24h</span></div>
+    <div class="k"><b>{{ m7.get('656',0) }}</b><span>656 · 7d</span></div>
+    <div class="k"><b>{{ bloqueados|length }}</b><span>bloqueados agora</span></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Bloqueados agora</h2>
+  {% if not bloqueados %}
+  <p class="desc">Nenhuma empresa em cooldown ou circuito aberto. 🟢</p>
+  {% else %}
+  <div class="tbl-wrap"><table style="min-width:720px">
+    <thead><tr><th>Empresa</th><th>Serviço</th><th>Estado</th><th>Libera em</th><th>Seguidos</th><th></th></tr></thead>
+    <tbody>
+    {% for b in bloqueados %}
+    <tr>
+      <td><b>{{ b.nome|title }}</b><div class="muted mono" style="font-size:12px">{{ b.cnpj }}</div></td>
+      <td>{{ b.rotulo }}</td>
+      <td>{% if b.cor=='vermelho' %}<span class="dotr"></span>circuito aberto
+          {% else %}<span class="dota"></span>cooldown{% endif %}</td>
+      <td>{% if b.ate %}<span class="mono">{{ b.libera }}</span><div class="muted" style="font-size:11px">{{ b.ate }}</div>{% else %}—{% endif %}</td>
+      <td>{{ b.seguidos }}</td>
+      <td>
+        {% if b.circ %}
+        <form method="post" action="{{ url_for('sefaz_rearmar', cnpj=b.cnpj, servico=b.servico) }}" style="margin:0"
+              onsubmit="return confirm('Rearmar {{ b.nome }} / {{ b.rotulo }}? Só faça se o cooldown já passou e a causa foi corrigida.');">
+          <button class="btn sm btn-primary">Rearmar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+</div>
+
+{% if saida.circuito or saida.ate %}
+<div class="card">
+  <h2>Saídas (certificado do escritório)</h2>
+  <p class="desc">Circuito={{ 'aberto' if saida.circuito else 'fechado' }} · seguidos={{ saida.seguidos }} · até {{ saida.ate or '—' }}</p>
+  {% if saida.circuito and office_cnpj %}
+  <form method="post" action="{{ url_for('sefaz_rearmar', cnpj=office_cnpj, servico='saida') }}"
+        onsubmit="return confirm('Rearmar saídas do escritório?');">
+    <button class="btn btn-primary sm">Rearmar saídas</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Semáforo por empresa</h2>
+  <div class="sema">
+    {% for c in cards %}
+    <div class="scard">
+      <b><span class="{{ 'dotr' if c.cor=='vermelho' else ('dota' if c.cor=='amarelo' else 'dotg') }}"></span>{{ c.nome|title }}</b>
+      <div class="cn">{{ c.cnpj }}</div>
+      {% for e in c.estados %}
+      <div style="font-size:12.5px;margin-top:6px">
+        {{ e.rotulo }}:
+        {% if e.cor=='verde' %}livre
+        {% elif e.cor=='amarelo' %}cooldown ({{ e.libera }})
+        {% else %}circuito · {{ e.seguidos }}x
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{% if top %}
+<div class="card">
+  <h2>Top bloqueios 656/429 (7 dias)</h2>
+  {% for t in top %}
+  <div style="margin:8px 0">
+    <div class="between" style="font-size:13px;margin-bottom:4px"><span>{{ t.nome|title }}</span><b>{{ t.n }}</b></div>
+    <div class="bar"><i style="width:{{ (t.n * 100 // max_top) }}%"></i></div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Histórico de ocorrências</h2>
+  <p class="desc">Últimas 200. Tipos: 656, 429, 108, 109, limite, circuito, rearme.</p>
+  <div class="tbl-wrap"><table style="min-width:820px">
+    <thead><tr><th>Quando</th><th>Empresa</th><th>Serviço</th><th>cStat</th><th>Tipo</th><th>Até</th><th>Seguidos</th></tr></thead>
+    <tbody>
+    {% for o in ocorr %}
+    <tr {% if o['tipo'] in ('656','circuito') %}style="background:color-mix(in srgb,var(--err) 8%,transparent)"{% endif %}>
+      <td class="muted">{{ o['quando'] }}</td>
+      <td>{{ (o['nome'] or '')|title }}<div class="muted mono" style="font-size:11px">{{ o['cnpj'] }}</div></td>
+      <td>{{ o['servico'] }}</td>
+      <td class="mono">{{ o['cstat'] }}</td>
+      <td><b>{{ o['tipo'] }}</b></td>
+      <td class="muted">{{ o['bloqueado_ate'] or '—' }}</td>
+      <td>{{ o['bloqueios_seguidos'] or 0 }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted" style="text-align:center;padding:24px">Nenhuma ocorrência ainda — o robô grava aqui cada 656/429/pausa.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

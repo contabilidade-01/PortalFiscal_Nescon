@@ -44,6 +44,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"
 
 EXPOSE 8000
+# Declara a pasta de dados. No EasyPanel App ainda é OBRIGATÓRIO criar o Mount
+# nomeado em /app/data — sem isso cada Implantar zera o banco.
+VOLUME ["/app/data"]
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["waitress-serve", "--listen=0.0.0.0:8000", "--threads=8", "app:app"]
