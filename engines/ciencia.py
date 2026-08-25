@@ -116,17 +116,25 @@ def _chaves_pasta(cnpj, sub):
                 chaves.add(m)
     return chaves
 
-def dar_ciencia_pendentes(emp, limite=30, sleep_seg=1):
+def dar_ciencia_pendentes(emp, limite=None, sleep_seg=None):
     """Manifesta Ciencia 210210 nos resumos (resNFe) que ainda nao viraram
     procNFe completo e que ainda nao tiveram ciencia (dedup em ciencia_dada).
-    A varredura do dia seguinte traz o XML completo dessas notas."""
+    A varredura seguinte (retomada ou diario) traz o XML completo dessas notas."""
+    from engines.pausa import CIENCIA_ESPERA, CIENCIA_LIMITE, em_cooldown
     cnpj = emp['cnpj']
+    if em_cooldown(emp['bloqueado_nfe_ate'] if 'bloqueado_nfe_ate' in emp.keys() else None):
+        return 0, 'cooldown'
     if not emp['arquivo']:
         return 0, 'sem_certificado'
+    if limite is None:
+        limite = CIENCIA_LIMITE
+    if sleep_seg is None:
+        sleep_seg = CIENCIA_ESPERA
     resumos = _chaves_pasta(cnpj, '02_resumo')
     completos = _chaves_pasta(cnpj, '01_entrada')
     pendentes = [ch for ch in (resumos - completos) if not models.ciencia_ja(cnpj, ch)]
     n = 0
+    parada = 'ok'
     for ch in pendentes[:limite]:
         nProt = None
         try:
@@ -136,13 +144,17 @@ def dar_ciencia_pendentes(emp, limite=30, sleep_seg=1):
                 nProt = m.group(1)
         except Exception as e:
             cStat = 'erro:%s' % str(e)[:30]
-        if cStat in ('135', '573'):        # registrado ou ja existia -> concluido
-            models.ciencia_registrar(cnpj, ch, cStat, nProt)   # guarda o protocolo (nProt)
+        if cStat in ('135', '573'):
+            models.ciencia_registrar(cnpj, ch, cStat, nProt)
             n += 1
-        elif cStat == '656':               # consumo indevido -> para
+        elif cStat == '656':
+            parada = '656'
             break
         time.sleep(sleep_seg)
-    return n, 'ok'
+    else:
+        if len(pendentes) > limite:
+            parada = 'cap'
+    return n, parada
 
 if __name__ == '__main__':
     import sys

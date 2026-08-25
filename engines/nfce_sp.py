@@ -5,14 +5,18 @@
      - NFCeDownloadXML.asmx     : baixa o XML (nfeProc) de 1 chave (44 digitos).
    Diferente da NF-e (NSU): aqui e por periodo, entao da p/ puxar meses historicos.
    Anti-consumo: cStat 101 -> subdivide o periodo recursivamente.
-   Baseado no projeto 'Baixa NFCe SP' (projeto_recuperado/sefaz_client.py).
+   Cadencia por IP (servidor): ~1.5s entre downloads; janela max. 100 dias (SAE).
 """
-import os, re, time, json
+import os, re, json
 from datetime import datetime, timedelta
 from lxml import etree
 import requests, urllib3
 import models
 from engines import certs
+from engines.pausa import (
+    NFCE_ESPERA, NFCE_LISTAGEM, NFCE_COOLDOWN_MIN, cooldown_ate, em_cooldown,
+    janela_nfce, pausa_nfce,
+)
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -27,7 +31,14 @@ WSDL_LIST = "http://www.portalfiscal.inf.br/nfe/wsdl/NFCeListagemChaves"
 WSDL_DOWN = "http://www.portalfiscal.inf.br/nfe/wsdl/NFCeDownloadXML"
 NFE = "http://www.portalfiscal.inf.br/nfe"
 NS = {"soap": SOAP12, "nfe": NFE}
-VERSAO = "1.00"; TPAMB = 1; THROTTLE = 0.3; TIMEOUT = 40
+VERSAO = "1.00"; TPAMB = 1; TIMEOUT = 40
+
+class ConsumoIndevido(Exception):
+    """SEFAZ-SP recusou por volume/consumo. Worker retoma apos cooldown."""
+    def __init__(self, cstat, xmot=''):
+        self.cstat = int(cstat) if str(cstat).isdigit() else 656
+        self.xmot = xmot or ''
+        Exception.__init__(self, 'cStat=%s %s' % (cstat, xmot))
 
 def _xmlb(el):
     return etree.tostring(el, encoding="utf-8", xml_declaration=True)
@@ -56,6 +67,8 @@ def _envelope(wsdl_ns, inner):
 def _post(sess, url, env):
     r = sess.post(url, data=env, timeout=TIMEOUT,
                   headers={"Content-Type": 'application/soap+xml; charset=utf-8; action=""'})
+    if r.status_code == 429:
+        raise ConsumoIndevido(429, 'HTTP 429')
     r.raise_for_status()
     return etree.fromstring(r.content)
 
@@ -63,19 +76,27 @@ def _ft(root, xp):
     n = root.find(xp, namespaces=NS)
     return n.text if n is not None else None
 
+def _dh_corte(root):
+    """SAE documenta dhEmisUltNfce; o motor antigo lia dhUltimaReceita."""
+    return (_ft(root, ".//nfe:retNfceListagemChaves/nfe:dhEmisUltNfce")
+            or _ft(root, ".//nfe:retNfceListagemChaves/nfe:dhUltimaReceita"))
+
 def _listar_raw(sess, dt_ini, dt_fim):
+    pausa_nfce(NFCE_LISTAGEM)
     root = _post(sess, URL_LISTAGEM, _envelope(WSDL_LIST, _inner_listagem(dt_ini, dt_fim)))
     cstat = int(_ft(root, ".//nfe:retNfceListagemChaves/nfe:cStat") or "0")
     xmot = _ft(root, ".//nfe:retNfceListagemChaves/nfe:xMotivo") or ""
     chaves = [n.text for n in root.findall(".//nfe:retNfceListagemChaves/nfe:chNFCe", namespaces=NS) if n.text]
-    dh = _ft(root, ".//nfe:retNfceListagemChaves/nfe:dhUltimaReceita")
+    dh = _dh_corte(root)
     return cstat, xmot, chaves, dh
 
 def listar_chaves(sess, dt_ini, dt_fim, split_min=1440):
-    """Lista chaves NFC-e no periodo, subdividindo se cStat 101 (consumo/incompleto)."""
+    """Lista chaves NFC-e no periodo, subdividindo se cStat 101 (lista incompleta)."""
     total = []
     def collect(ini, fim):
         cstat, xmot, chaves, dh = _listar_raw(sess, ini, fim)
+        if cstat in (656, 429):
+            raise ConsumoIndevido(cstat, xmot)
         if cstat in (100, 107):
             total.extend(chaves); return
         if cstat == 101:
@@ -88,7 +109,7 @@ def listar_chaves(sess, dt_ini, dt_fim, split_min=1440):
             if (end - ini) <= timedelta(minutes=split_min):
                 step = timedelta(minutes=max(5, split_min // 24)); cur = ini
                 while cur < end:
-                    nxt = min(cur + step, end); collect(cur, nxt); cur = nxt; time.sleep(THROTTLE)
+                    nxt = min(cur + step, end); collect(cur, nxt); cur = nxt
                 return
             collect(ini, mid); collect(mid, end); return
         raise RuntimeError("listagem cStat=%s %s" % (cstat, xmot))
@@ -100,13 +121,17 @@ def listar_chaves(sess, dt_ini, dt_fim, split_min=1440):
     return out
 
 def baixar_xml(sess, chave):
-    """Baixa o nfeProc de 1 chave. Retorna bytes ou None."""
+    """Baixa o nfeProc de 1 chave. Retorna (bytes|None, cstat)."""
+    pausa_nfce(NFCE_ESPERA)
     root = _post(sess, URL_DOWNLOAD, _envelope(WSDL_DOWN, _inner_download(chave)))
     cstat = int(_ft(root, ".//nfe:retNfceDownloadXML/nfe:cStat") or "0")
+    xmot = _ft(root, ".//nfe:retNfceDownloadXML/nfe:xMotivo") or ""
+    if cstat in (656, 429):
+        raise ConsumoIndevido(cstat, xmot)
     if cstat != 200:
-        return None
+        return None, cstat
     proc = root.find(".//nfe:retNfceDownloadXML/nfe:proc/nfe:nfeProc", namespaces=NS)
-    return _xmlb(proc) if proc is not None else None
+    return (_xmlb(proc) if proc is not None else None), cstat
 
 def sessao(cert_path, senha):
     """requests.Session com mTLS (nosso certs.pem_temp) + verify=False (cadeia SP)."""
@@ -138,8 +163,12 @@ def _baixados(cnpj):
 def puxar_nfce(emp, limite=None):
     """Puxa as NFC-e (vendas) de uma empresa SP. Periodo (data inicial ate agora) e
     limite por rodada vem dos parametros nfce_data_inicial / nfce_limite (editaveis em
-    Configuracoes). Salva cada nota na sua competencia (dhEmi). Idempotente."""
+    Configuracoes). Salva cada nota na sua competencia (dhEmi). Idempotente.
+    parada=limite/656/429 -> o worker retoma esta empresa apos a pausa."""
     cnpj = emp['cnpj']
+    bloq_ate = emp['bloqueado_nfce_ate'] if 'bloqueado_nfce_ate' in emp.keys() else None
+    if em_cooldown(bloq_ate):
+        return 0, 'cooldown'
     if (emp['uf'] or '').upper() not in ('', 'SP'):
         return 0, 'uf_nao_sp'
     if not emp['arquivo']:
@@ -150,12 +179,12 @@ def puxar_nfce(emp, limite=None):
         dt_ini = datetime.strptime(di[:10], '%Y-%m-%d')
     except Exception:
         dt_ini = datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    dt_fim = datetime.now()
+    dt_ini, dt_fim = janela_nfce(dt_ini, datetime.now())
     try:
         sess, tmp = sessao(emp['arquivo'], emp['senha'])
     except Exception as e:
         return 0, 'erro_cert:%s' % str(e)[:40]
-    total = 0; parada = 'fim'; n_chaves = 0
+    total = 0; parada = 'fim'; n_chaves = 0; bloq = None
     try:
         chaves = listar_chaves(sess, dt_ini, dt_fim); n_chaves = len(chaves)
         ja = _baixados(cnpj)
@@ -163,15 +192,16 @@ def puxar_nfce(emp, limite=None):
         if len(pend) > limite:
             pend = pend[:limite]; parada = 'limite'
         for ch in pend:
-            try:
-                xml = baixar_xml(sess, ch)
-                if xml:
-                    pasta = os.path.join(SAIDA, cnpj, _comp_de(xml), 'NFCe', '01_venda')
-                    os.makedirs(pasta, exist_ok=True)
-                    open(os.path.join(pasta, ch + '.xml'), 'wb').write(xml); total += 1
-            except Exception:
-                pass
-            time.sleep(THROTTLE)
+            xml, cstat = baixar_xml(sess, ch)
+            if xml:
+                pasta = os.path.join(SAIDA, cnpj, _comp_de(xml), 'NFCe', '01_venda')
+                os.makedirs(pasta, exist_ok=True)
+                open(os.path.join(pasta, ch + '.xml'), 'wb').write(xml); total += 1
+            elif cstat == 108:
+                parada = '108'; bloq = cooldown_ate(NFCE_COOLDOWN_MIN); break
+    except ConsumoIndevido as e:
+        parada = '656' if e.cstat == 656 else str(e.cstat)
+        bloq = cooldown_ate(NFCE_COOLDOWN_MIN)
     except Exception as e:
         parada = 'erro:%s' % str(e)[:60]
     finally:
@@ -179,9 +209,10 @@ def puxar_nfce(emp, limite=None):
             try: os.remove(f)
             except Exception: pass
     with models.con() as c:
-        c.execute('UPDATE empresas SET total_nfce=COALESCE(total_nfce,0)+?, ultima_exec_nfce=? WHERE id=?',
-                  (total, datetime.now().strftime('%Y-%m-%d %H:%M'), emp['id']))
+        c.execute('UPDATE empresas SET total_nfce=COALESCE(total_nfce,0)+?, ultima_exec_nfce=?, bloqueado_nfce_ate=? WHERE id=?',
+                  (total, datetime.now().strftime('%Y-%m-%d %H:%M'), bloq, emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfce', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'),
-                   total, parada, 'desde %s | chaves=%d' % (di[:10], n_chaves)))
+                   total, parada, 'desde %s | chaves=%d | janela<=%dd' % (
+                       dt_ini.strftime('%Y-%m-%d'), n_chaves, max(1, (dt_fim - dt_ini).days))))
     return total, parada

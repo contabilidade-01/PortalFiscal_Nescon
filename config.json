@@ -4,7 +4,23 @@
   "pasta_local_extra": "",
   "nfe": {
     "max_lotes_por_run": 20,
-    "espera_seg": 2
+    "espera_seg": 2,
+    "espera_entre_empresas_seg": 2,
+    "cooldown_min": 65,
+    "retomar_cap_seg": 15
+  },
+  "nfce": {
+    "espera_seg": 1.5,
+    "espera_listagem_seg": 1.0,
+    "espera_entre_empresas_seg": 3,
+    "cooldown_min": 65,
+    "max_dias": 100,
+    "retomar_limite_seg": 90
+  },
+  "ciencia": {
+    "espera_seg": 2,
+    "limite_por_run": 30,
+    "cooldown_min": 65
   },
   "nfse": {
     "base_url": "https://adn.nfse.gov.br",

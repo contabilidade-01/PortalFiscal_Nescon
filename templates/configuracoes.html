@@ -30,7 +30,7 @@
     <div style="max-width:180px"><label>Limite</label><input name="limite" value="{{ limite }}" inputmode="numeric" maxlength="6"></div>
     <div class="status-strip" style="background:var(--surface2);margin-top:12px">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
-      <span><b>Passou de 500 num mês?</b> Sem problema: cada rodada baixa até o limite e <b>pula o que já baixou</b>. Se a execução terminar com a parada <code>limite</code>, é só <b>clicar em "Listar e baixar NFC-e" de novo</b> que ela continua de onde parou, até baixar tudo. Isso é <b>exclusivo da NFC-e</b> (varejo gera muitas notas). NF-e e NFS-e usam busca incremental por NSU e não precisam desse teto.</span>
+      <span><b>Passou de 500 num mês?</b> Cada rodada baixa até o limite e <b>pula o que já baixou</b>. Se terminar em <code>limite</code>, o servidor <b>espera ~90 s e continua sozinho</b> (não precisa clicar de novo). A pausa evita bloqueio de IP na SEFAZ-SP. NF-e de entrada/saída usa NSU incremental, com pausa de ~1 hora só quando a SEFAZ diz que não há mais documento (137/fim) ou consumo indevido (656).</span>
     </div>
 
     <div class="row" style="margin-top:18px">

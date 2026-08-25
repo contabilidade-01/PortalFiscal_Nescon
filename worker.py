@@ -5,17 +5,23 @@
    - Fila persistente em SQLite (tabela jobs) -> o status sobrevive e e visivel.
    - Claim atomico -> seguro se o run_diario (tarefa agendada) tambem processar.
    - Processa 1 job por vez e 1 empresa por vez (respeita anti-bloqueio).
+   - Retomada: cap/limite/656/cooldown viram um job futuro (agendado_para) em vez
+     de martelar a SEFAZ. No servidor o loop pega quando o horario chega.
 """
 import os, threading, time
 from datetime import datetime, timedelta
 import models
 from engines import nfe, nfse, ciencia, nfce_sp
+from engines.pausa import (
+    NFE_ENTRE_EMPRESAS, NFCE_ENTRE_EMPRESAS, RETOMAR,
+    delay_retomada,
+)
 
 _started = False
 _lock = threading.Lock()
 
-# Nenhuma busca real chega perto disso; acima daqui o processo morreu no meio.
 HORAS_TRAVADO = 6
+MAX_RETOMADAS_DIA = 250
 
 def agora():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -32,12 +38,39 @@ def reconciliar_travados():
                             WHERE status='rodando' AND (iniciado IS NULL OR iniciado < ?)""",
                          (agora(), corte)).rowcount
 
-def enfileirar(tipo, escopo='todas', origem='manual', user_id=None):
-    """tipo: nfe_entradas | nfe_saidas | nfse | ciencia | completo"""
+def _ja_na_fila(tipo, escopo):
     with models.con() as c:
-        cur = c.execute('INSERT INTO jobs(tipo,escopo,status,criado,origem,user_id) VALUES(?,?,?,?,?,?)',
-                        (tipo, escopo, 'fila', agora(), origem, user_id))
-        return cur.lastrowid
+        r = c.execute("SELECT id FROM jobs WHERE tipo=? AND escopo=? AND status='fila'",
+                      (tipo, escopo or 'todas')).fetchone()
+        return r is not None
+
+def _retomadas_hoje():
+    dia = datetime.now().strftime('%Y-%m-%d')
+    with models.con() as c:
+        return c.execute("SELECT COUNT(*) FROM jobs WHERE origem='retomada' AND criado>=?",
+                         (dia,)).fetchone()[0]
+
+def enfileirar(tipo, escopo='todas', origem='manual', user_id=None, agendado_para=None):
+    """tipo: nfe_entradas | nfe_saidas | nfse | ciencia | nfce | completo"""
+    escopo = escopo or 'todas'
+    if origem == 'retomada':
+        if _ja_na_fila(tipo, escopo):
+            return None
+        if _retomadas_hoje() >= MAX_RETOMADAS_DIA:
+            return None
+    with models.con() as c:
+        cur = c.execute(
+            'INSERT INTO jobs(tipo,escopo,status,criado,origem,user_id,agendado_para) VALUES(?,?,?,?,?,?,?)',
+            (tipo, escopo, 'fila', agora(), origem, user_id, agendado_para))
+    return cur.lastrowid
+
+def _enfileirar_retomada(tipo, escopo, parada, ate=None, motor='nfe'):
+    delay = delay_retomada(parada, ate=ate, motor=motor)
+    if delay is None:
+        return None
+    quando = (datetime.now() + timedelta(seconds=int(delay))).strftime('%Y-%m-%d %H:%M:%S')
+    jid = enfileirar(tipo, escopo=escopo, origem='retomada', agendado_para=quando)
+    return jid
 
 def _upd(jid, **kw):
     if not kw: return
@@ -51,56 +84,96 @@ def _empresas(escopo, col):
             return c.execute('SELECT * FROM empresas WHERE cnpj=? AND senha_ok=1', (escopo,)).fetchall()
         return c.execute('SELECT * FROM empresas WHERE ativo=1 AND senha_ok=1 AND %s=1' % col).fetchall()
 
+def _campo_emp(cnpj, col):
+    with models.con() as c:
+        r = c.execute('SELECT %s FROM empresas WHERE cnpj=?' % col, (cnpj,)).fetchone()
+        return r[0] if r else None
+
+def _agendar_se_precisa(tipo_job, cnpj, parada, motor='nfe'):
+    if parada not in RETOMAR:
+        return
+    col = {'nfe': 'bloqueado_nfe_ate', 'nfce': 'bloqueado_nfce_ate',
+           'nfse': 'bloqueado_nfse_ate'}.get(motor)
+    ate = _campo_emp(cnpj, col) if (col and cnpj) else None
+    if motor == 'nfe' and tipo_job == 'nfe_saidas':
+        ate = models.get_param('bloqueado_saida_ate')
+    _enfileirar_retomada(tipo_job, cnpj or 'todas', parada, ate=ate, motor=motor)
+
 def _executar(job):
     jid, tipo, escopo = job['id'], job['tipo'], job['escopo']
     docs = 0
-    def etapa_empresas(nome_etapa, col, fn, com_ciencia=False):
+    def etapa_empresas(nome_etapa, col, fn, tipo_job, motor, com_ciencia=False, espera_seg=0):
         nonlocal docs
         emps = _empresas(escopo, col)
         _upd(jid, total=len(emps), feitos=0, mensagem=nome_etapa)
         feitos = 0
         for e in emps:
             _upd(jid, atual='%s - %s' % (nome_etapa, (e['nome'] or '')[:32]))
+            parada = 'ok'
             try:
-                d, _p = fn(e); docs += d
-                if com_ciencia:
-                    try: ciencia.dar_ciencia_pendentes(e)
-                    except Exception: pass
+                d, parada = fn(e); docs += d
             except Exception:
-                pass
+                parada = 'erro'
+            _agendar_se_precisa(tipo_job, e['cnpj'], parada, motor=motor)
+            if com_ciencia:
+                try:
+                    _n, p_c = ciencia.dar_ciencia_pendentes(e)
+                    _agendar_se_precisa('ciencia', e['cnpj'], p_c, motor='nfe')
+                except Exception:
+                    pass
             feitos += 1
             _upd(jid, feitos=feitos, docs=docs)
+            if espera_seg:
+                time.sleep(espera_seg)
     if tipo in ('nfe_entradas', 'completo'):
-        etapa_empresas('Entradas NF-e', 'puxa_nfe', nfe.puxar_entradas, com_ciencia=(tipo == 'completo'))
+        # Ciencia apos cada entrada: libera o XML completo na proxima distNSU.
+        etapa_empresas('Entradas NF-e', 'puxa_nfe', nfe.puxar_entradas, 'nfe_entradas', 'nfe',
+                       com_ciencia=True, espera_seg=NFE_ENTRE_EMPRESAS)
     if tipo == 'ciencia':
         emps = _empresas(escopo, 'puxa_nfe'); _upd(jid, total=len(emps), feitos=0, mensagem='Ciencia 210210')
         for i, e in enumerate(emps, 1):
             _upd(jid, atual='Ciencia - %s' % (e['nome'] or '')[:32])
-            try: ciencia.dar_ciencia_pendentes(e)
-            except Exception: pass
+            try:
+                _n, p_c = ciencia.dar_ciencia_pendentes(e)
+                _agendar_se_precisa('ciencia', e['cnpj'], p_c, motor='nfe')
+            except Exception:
+                pass
             _upd(jid, feitos=i)
+            time.sleep(NFE_ENTRE_EMPRESAS)
     if tipo in ('nfe_saidas', 'completo') and models.get_param('office_cnpj'):
         _upd(jid, atual='Saidas NF-e (escritorio/autXML)', mensagem='Saidas NF-e')
+        parada = 'ok'
         try:
-            d, _p = nfe.puxar_saidas_escritorio(); docs += d
+            d, parada = nfe.puxar_saidas_escritorio(); docs += d
         except Exception:
-            pass
+            parada = 'erro'
+        _agendar_se_precisa('nfe_saidas', 'todas', parada, motor='nfe')
     if tipo in ('nfse', 'completo'):
-        etapa_empresas('NFS-e', 'puxa_nfse', nfse.puxar_nfse)
+        etapa_empresas('NFS-e', 'puxa_nfse', nfse.puxar_nfse, 'nfse', 'nfse',
+                       espera_seg=NFE_ENTRE_EMPRESAS)
     if tipo in ('nfce', 'completo'):
-        etapa_empresas('NFC-e (SP)', 'puxa_nfce', nfce_sp.puxar_nfce)
+        etapa_empresas('NFC-e (SP)', 'puxa_nfce', nfce_sp.puxar_nfce, 'nfce', 'nfce',
+                       espera_seg=NFCE_ENTRE_EMPRESAS)
     return docs
+
+def _claim_proximo():
+    """Pega o proximo job cuja hora de inicio ja chegou (retomadas agendadas esperam)."""
+    now = agora()
+    with models.con() as c:
+        job = c.execute("""SELECT * FROM jobs WHERE status='fila'
+                           AND (agendado_para IS NULL OR agendado_para<=?)
+                           ORDER BY id LIMIT 1""", (now,)).fetchone()
+        claimed = 0
+        if job:
+            claimed = c.execute("UPDATE jobs SET status='rodando', iniciado=? WHERE id=? AND status='fila'",
+                                (now, job['id'])).rowcount
+        return job if claimed else None
 
 def _loop():
     while True:
         try:
-            with models.con() as c:
-                job = c.execute("SELECT * FROM jobs WHERE status='fila' ORDER BY id LIMIT 1").fetchone()
-                claimed = 0
-                if job:
-                    claimed = c.execute("UPDATE jobs SET status='rodando', iniciado=? WHERE id=? AND status='fila'",
-                                        (agora(), job['id'])).rowcount
-            if job and claimed:
+            job = _claim_proximo()
+            if job:
                 try:
                     docs = _executar(job)
                     _upd(job['id'], status='ok', terminado=agora(), docs=docs, atual='',
@@ -113,15 +186,12 @@ def _loop():
             time.sleep(5)
 
 def processar_fila_ate_vazia(limite=50):
-    """Uso pelo run_diario: processa jobs enfileirados sem depender do web."""
+    """Uso pelo run_diario: processa jobs JA LIBERADOS. Retomadas futuras ficam
+    na fila para o worker do processo web (servidor) pegar no horario."""
     n = 0
     while n < limite:
-        with models.con() as c:
-            job = c.execute("SELECT * FROM jobs WHERE status='fila' ORDER BY id LIMIT 1").fetchone()
-            if not job: break
-            claimed = c.execute("UPDATE jobs SET status='rodando', iniciado=? WHERE id=? AND status='fila'",
-                                (agora(), job['id'])).rowcount
-        if not claimed: continue
+        job = _claim_proximo()
+        if not job: break
         try:
             docs = _executar(job)
             _upd(job['id'], status='ok', terminado=agora(), docs=docs, atual='', mensagem='Concluido - %d documentos' % docs)
@@ -156,7 +226,7 @@ def iniciar_worker():
     with _lock:
         if _started: return
         _started = True
-        try: reconciliar_travados()   # limpa job orfao do processo anterior
+        try: reconciliar_travados()
         except Exception: pass
         threading.Thread(target=_loop, daemon=True).start()
         if os.environ.get('FISCAL_CRON', '0') == '1':
@@ -165,6 +235,7 @@ def iniciar_worker():
 def status():
     with models.con() as c:
         rodando = c.execute("SELECT * FROM jobs WHERE status='rodando' ORDER BY id DESC LIMIT 1").fetchone()
-        fila = c.execute("SELECT COUNT(*) FROM jobs WHERE status='fila'").fetchone()[0]
-        recentes = c.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 10").fetchall()
+        fila = c.execute("""SELECT COUNT(*) FROM jobs WHERE status='fila'
+                            AND (agendado_para IS NULL OR agendado_para<=?)""", (agora(),)).fetchone()[0]
+        recentes = c.execute('SELECT * FROM jobs ORDER BY id DESC LIMIT 10').fetchall()
     return rodando, fila, recentes
