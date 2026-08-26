@@ -40,8 +40,11 @@ RUN chmod +x /entrypoint.sh \
 # entrypoint sobe como root só para chown do volume; depois vira appuser
 USER root
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz').status==200 else 1)"
+# Liveness barata em /live (SEM banco). start-period folgado p/ o cold start das libs
+# nativas (lxml/xmlsec/cryptography) + migracoes; timeout curto porque /live nao bloqueia.
+# NAO usar /healthz aqui: ele faz I/O de banco e um lock do worker reiniciaria o container.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/live').status==200 else 1)"
 
 EXPOSE 8000
 # Declara a pasta de dados. No EasyPanel App ainda é OBRIGATÓRIO criar o Mount

@@ -44,6 +44,9 @@ def con():
     c.row_factory = sqlite3.Row
     c.execute('PRAGMA foreign_keys=ON')
     c.execute('PRAGMA journal_mode=WAL')
+    # Espera o lock em vez de estourar 'database is locked' na hora (casa com timeout=30s).
+    # Sem isso, uma leitura concorrente com o worker vira excecao e derruba /healthz.
+    c.execute('PRAGMA busy_timeout=30000')
     return c
 
 def _add_col(c, tabela, coluna, ddl):

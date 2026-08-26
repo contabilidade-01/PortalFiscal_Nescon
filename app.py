@@ -43,9 +43,19 @@ if os.environ.get('TRUST_PROXY', os.environ.get('FLASK_HTTPS')) == '1':
 models.init_db()
 worker.iniciar_worker()  # motor de jobs em background (roda mesmo sem usuario logado)
 
+@app.route('/live')
+def live():
+    """LIVENESS — ping trivial, SEM banco. E' o que o HEALTHCHECK do Docker/Swarm
+    checa: se responder, o processo esta vivo. Nao toca em SQLite de proposito —
+    assim o worker escrevendo (lock WAL) NUNCA derruba o container em loop."""
+    return {'ok': True}, 200
+
+
 @app.route('/healthz')
 def healthz():
-    """Healthcheck do EasyPanel/Docker — sem login. Inclui diagnostico de volume."""
+    """READINESS/diagnostico — sem login. Faz I/O de banco para reportar o volume,
+    mas NUNCA devolve 503: um soluco de leitura nao pode matar o container (isso e'
+    o /live). Erros viram ok=false no corpo, com HTTP 200."""
     try:
         d = models.diagnostico_persistencia()
         return {
@@ -56,8 +66,8 @@ def healthz():
             'jobs': d['jobs'],
             'data_dir': d['data_dir'],
         }, 200
-    except Exception:
-        return {'ok': False}, 503
+    except Exception as e:
+        return {'ok': False, 'erro': str(e)[:200]}, 200
 
 def login_req(f):
     @wraps(f)
