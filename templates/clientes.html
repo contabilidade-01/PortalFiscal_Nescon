@@ -23,7 +23,7 @@
       <form method="get" class="rowform" style="margin:0"><input name="q" value="{{ q }}" placeholder="buscar nome/CNPJ" class="mini" style="width:180px"><button class="btn btn-ghost sm">Buscar</button></form>
     </div>
   </div>
-  <p class="desc" style="margin-top:-6px">Marque quais puxadores cada cliente usa e o método de saída. Cada linha salva individualmente.</p>
+  <p class="desc" style="margin-top:-6px">Marque quais puxadores cada cliente usa e o método de saída. O tick salva na hora; emissor e método de saída usam Salvar.</p>
   <div class="tbl-wrap">
   <table style="min-width:900px">
     <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Puxadores</th><th>Método saída</th><th>Emissor</th><th>Ativo</th><th>Ações</th></tr></thead>
@@ -35,15 +35,15 @@
       <td>{% if e['senha_ok'] %}<span class="certbadge ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="certbadge no">falta</span>{% endif %}</td>
       <td colspan="4">
         <form method="post" action="{{ url_for('cliente_salvar', eid=e['id']) }}?q={{ q }}" class="rowform">
-          <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if e['puxa_nfe'] }}> NF-e</label>
-          <label class="chk"><input type="checkbox" name="puxa_nfse" {{ 'checked' if e['puxa_nfse'] }}> NFS-e</label>
-          <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if e['puxa_nfce'] }}> NFC-e</label>
+          <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if e['puxa_nfe'] }} onchange="this.form.submit()"> NF-e</label>
+          <label class="chk"><input type="checkbox" name="puxa_nfse" {{ 'checked' if e['puxa_nfse'] }} onchange="this.form.submit()"> NFS-e</label>
+          <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if e['puxa_nfce'] }} onchange="this.form.submit()"> NFC-e</label>
           <select name="metodo_saida" class="mini">
             {% for v,l in [('a_verificar','saída: a verificar'),('autXML','saída: autXML'),('conector','saída: conector'),('origem','saída: origem/emissor'),('nao_aplica','saída: não se aplica')] %}
             <option value="{{ v }}" {{ 'selected' if e['metodo_saida']==v }}>{{ l }}</option>{% endfor %}
           </select>
           <input name="emissor" value="{{ e['emissor'] or '' }}" placeholder="emissor (Bling...)" class="mini" style="width:130px">
-          <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if e['ativo'] }}> ativo</label>
+          <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if e['ativo'] }} onchange="this.form.submit()"> ativo</label>
           <button class="btn btn-ghost sm">Salvar</button>
         </form>
       </td>
