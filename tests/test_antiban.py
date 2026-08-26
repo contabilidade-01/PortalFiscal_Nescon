@@ -96,7 +96,8 @@ def test_g3_circuito_abre_no_limiar():
 def test_g5_109_retomavel_e_cooldown():
     _db()
     assert '109' in RETOMAR
-    assert delay_retomada('109') == 65 * 60
+    from engines.pausa import RETOMAR_BUFFER_SEG
+    assert delay_retomada('109') == 65 * 60 + RETOMAR_BUFFER_SEG
     guard.registrar_bloqueio(_CNPJ, 'distNSU', '109')
     e = _emp()
     assert e['bloqueado_nfe_ate']

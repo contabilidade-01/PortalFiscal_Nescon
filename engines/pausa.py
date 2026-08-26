@@ -33,6 +33,12 @@ CIENCIA_ESPERA = float(CIENCIA.get('espera_seg', 2))
 CIENCIA_LIMITE = int(CIENCIA.get('limite_por_run', 30))
 CIENCIA_COOLDOWN_MIN = int(CIENCIA.get('cooldown_min', 65))
 
+# Margem extra ao RETOMAR apos cooldown/656: se a retomada dispara EXATAMENTE no
+# fim do cooldown (65 min), a SEFAZ ainda ve "consulta < 1h" e devolve 656 de novo
+# (foi o 656 em massa das 06:07). Alguns minutos de folga empurram p/ depois da 1h.
+_AB = CFG.get('antiban') or {}
+RETOMAR_BUFFER_SEG = int(_AB.get('retomar_buffer_seg', 300))  # 5 min
+
 # Paradas que ainda tem trabalho: o servidor retoma sozinho apos a pausa.
 # circuito_aberto NÃO entra — exige rearme manual na tela Saúde SEFAZ.
 RETOMAR = frozenset(('cap', 'limite', '656', '429', 'cooldown', '108', '109'))
@@ -116,8 +122,9 @@ def delay_retomada(parada, ate=None, motor='nfe'):
     if parada == '429':
         return segundos_ate(ate) if ate else 1800
     if parada in ('656', 'cooldown', '108', '109'):
+        # +buffer para nao reconsultar exatamente no fim da 1h (evita 656 na borda).
         if ate:
-            return segundos_ate(ate)
+            return segundos_ate(ate) + RETOMAR_BUFFER_SEG
         mins = NFCE_COOLDOWN_MIN if motor == 'nfce' else NFE_COOLDOWN_MIN
-        return mins * 60
+        return mins * 60 + RETOMAR_BUFFER_SEG
     return None

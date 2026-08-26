@@ -26,22 +26,44 @@ MAX_RETOMADAS_DIA = 250
 def agora():
     return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-def reconciliar_travados():
+def reconciliar_travados(tudo=False):
     """Job que ficou 'rodando' porque o processo morreu (reinicio do VPS, deploy,
        queda) nunca mais sai desse estado: a tela passa a mentir 'buscando...'
-       para sempre. Marca como interrompido. O corte de horas evita derrubar um
-       job que o run_diario esteja processando agora, em paralelo ao web."""
-    corte = (datetime.now() - timedelta(hours=HORAS_TRAVADO)).strftime('%Y-%m-%d %H:%M:%S')
+       (o famoso 'so girando') para sempre. Marca como interrompido.
+
+       tudo=True  -> usado no STARTUP do worker web. Como so 1 processo processa a
+                     fila, QUALQUER job em 'rodando' no boot e' orfao (o processo
+                     que o rodava morreu). Reconcilia todos na hora — mata o
+                     'so girando' no proximo deploy limpo.
+       tudo=False -> usado pelo run_diario (pode rodar em paralelo ao web): so os
+                     travados ha mais de HORAS_TRAVADO, p/ nao derrubar um job que
+                     o outro processo esteja rodando agora."""
+    if tudo:
+        where, args = "status='rodando'", (agora(),)
+    else:
+        corte = (datetime.now() - timedelta(hours=HORAS_TRAVADO)).strftime('%Y-%m-%d %H:%M:%S')
+        where, args = "status='rodando' AND (iniciado IS NULL OR iniciado < ?)", (agora(), corte)
     with models.con() as c:
         return c.execute("""UPDATE jobs SET status='interrompido', terminado=?, atual='',
-                                   mensagem='Interrompida — o serviço parou no meio da busca.'
-                            WHERE status='rodando' AND (iniciado IS NULL OR iniciado < ?)""",
-                         (agora(), corte)).rowcount
+                                   mensagem='Interrompida — o serviço reiniciou no meio da busca.'
+                            WHERE %s""" % where, args).rowcount
 
 def _ja_na_fila(tipo, escopo):
     with models.con() as c:
         r = c.execute("SELECT id FROM jobs WHERE tipo=? AND escopo=? AND status='fila'",
                       (tipo, escopo or 'todas')).fetchone()
+        return r is not None
+
+def _completo_agendado_hoje():
+    """True se ja existe um 'completo' de origem 'agendado' criado hoje, ou um
+    'completo' ainda ativo (fila/rodando). Evita sweep diario duplicado por restart."""
+    dia = datetime.now().strftime('%Y-%m-%d')
+    with models.con() as c:
+        r = c.execute("""SELECT 1 FROM jobs
+                         WHERE tipo='completo'
+                           AND ( (origem='agendado' AND criado>=?)
+                                 OR status IN ('fila','rodando') )
+                         LIMIT 1""", (dia,)).fetchone()
         return r is not None
 
 def _retomadas_hoje():
@@ -117,8 +139,11 @@ def _executar(job):
             _agendar_se_precisa(tipo_job, e['cnpj'], parada, motor=motor)
             if com_ciencia:
                 try:
-                    _n, p_c = ciencia.dar_ciencia_pendentes(e)
-                    _agendar_se_precisa('ciencia', e['cnpj'], p_c, motor='nfe')
+                    # A ciencia roda aqui logo apos a entrada e volta no cron diario.
+                    # NAO agenda retomada propria: a retomada da ENTRADA (com_ciencia)
+                    # ja re-executa a ciencia. Sem isto, cada empresa em cooldown
+                    # empilhava dezenas de jobs 'Ciencia 210210' (estouro de 250/dia).
+                    ciencia.dar_ciencia_pendentes(e)
                 except Exception:
                     pass
             feitos += 1
@@ -135,7 +160,11 @@ def _executar(job):
             _upd(jid, atual='Ciencia - %s' % (e['nome'] or '')[:32])
             try:
                 _n, p_c = ciencia.dar_ciencia_pendentes(e)
-                _agendar_se_precisa('ciencia', e['cnpj'], p_c, motor='nfe')
+                # So reprograma se a PROPRIA ciencia levou 656 (bloqueio real com
+                # pendencia). 'cooldown'/'cap' aqui e' redundante — o ciclo de
+                # entrada da empresa re-executa a ciencia.
+                if p_c == '656':
+                    _agendar_se_precisa('ciencia', e['cnpj'], p_c, motor='nfe')
             except Exception:
                 pass
             _upd(jid, feitos=i)
@@ -216,7 +245,12 @@ def _loop_agendado():
             stamp = now.strftime('%Y-%m-%d')
             if last != stamp and now >= alvo and (now - alvo).total_seconds() < 120:
                 last = stamp
-                enfileirar('completo', origem='agendado')
+                # Dedup persistente: se um 'completo' agendado ja foi criado hoje
+                # (ou ainda esta na fila/rodando), NAO cria outro. Sem isto, cada
+                # restart do container na janela das 06:00 dispara um sweep extra
+                # -> varredura duplicada martelando a SEFAZ (656 em massa).
+                if not _completo_agendado_hoje():
+                    enfileirar('completo', origem='agendado')
         except Exception:
             pass
         time.sleep(20)
@@ -226,7 +260,8 @@ def iniciar_worker():
     with _lock:
         if _started: return
         _started = True
-        try: reconciliar_travados()
+        # Startup do worker web: limpa TODO job orfao ('so girando' de deploy anterior).
+        try: reconciliar_travados(tudo=True)
         except Exception: pass
         threading.Thread(target=_loop, daemon=True).start()
         if os.environ.get('FISCAL_CRON', '0') == '1':

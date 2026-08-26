@@ -2,7 +2,7 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime, timedelta
-from engines.pausa import nsu15, janela_nfce, delay_retomada, em_cooldown, RETOMAR
+from engines.pausa import nsu15, janela_nfce, delay_retomada, em_cooldown, RETOMAR, RETOMAR_BUFFER_SEG
 
 def test_nsu15():
     assert nsu15(None) == '000000000000000'
@@ -31,8 +31,8 @@ def test_delay_retomada():
     assert delay_retomada('limite', motor='nfe') == 60
     assert delay_retomada('fim') is None
     assert delay_retomada('137') is None
-    assert delay_retomada('656') == 65 * 60
-    assert delay_retomada('109') == 65 * 60
+    assert delay_retomada('656') == 65 * 60 + RETOMAR_BUFFER_SEG
+    assert delay_retomada('109') == 65 * 60 + RETOMAR_BUFFER_SEG
 
 def test_em_cooldown():
     assert em_cooldown(None) is False

@@ -32,6 +32,7 @@
   "antiban": {
     "circuito_limiar": 5,
     "distnsu_limite_qtd": 300,
-    "distnsu_limite_min": 5
+    "distnsu_limite_min": 5,
+    "retomar_buffer_seg": 300
   }
 }
