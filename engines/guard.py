@@ -86,6 +86,15 @@ def pode(cnpj, servico):
         if em_cooldown(ate):
             return Decisao(False, 'cooldown saídas até %s' % ate, ate, 'cooldown')
         office = models.get_param('office_cnpj') or cnpj
+        # MESMO fluxo de NSU: se o CNPJ do escritorio TAMBEM e cliente (entrada),
+        # a distNSU dele foi consultada ha pouco pela entrada. Consultar de novo
+        # aqui = 2 consultas no mesmo CNPJ dentro da 1h -> 656. Honra o cooldown
+        # da entrada desse CNPJ (defere a saida p/ depois da 1h).
+        e_office = _emp(office)
+        if e_office and em_cooldown(e_office['bloqueado_nfe_ate']):
+            ate_e = e_office['bloqueado_nfe_ate']
+            return Decisao(False, 'cooldown (entrada do CNPJ do escritório) até %s' % ate_e,
+                           ate_e, 'cooldown')
         if not models.pode_consultar(office, 'distNSU'):
             return Decisao(False, 'limite horário distNSU (escritório)', parada='limite')
         return Decisao(True)
@@ -163,6 +172,11 @@ def registrar_bloqueio(cnpj, servico, cstat, xmot='', nome=''):
                 cstat_tipo = 'circuito'
             else:
                 cstat_tipo = cstat
+        elif cstat in ('fim', '137', 'ok'):
+            # Consulta bem-sucedida: ZERA o contador (igual ao ramo normal).
+            # Sem isto o contador da saida so subia e batia o circuito em ~5 dias.
+            models.set_param('bloqueios_seguidos_saida', '0')
+            cstat_tipo = cstat
         else:
             cstat_tipo = cstat
         if ate and cstat != 'limite':

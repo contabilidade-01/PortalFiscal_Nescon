@@ -93,6 +93,34 @@ def test_g3_circuito_abre_no_limiar():
         guard.CIRCUITO_LIMIAR = orig
 
 
+def test_saida_137_reseta_contador():
+    """Fix A: saída em 137/fim ZERA bloqueios_seguidos_saida (antes so subia ->
+    abria circuito em ~5 dias)."""
+    _db()
+    guard.registrar_bloqueio('OFFICE', 'saida', '656')
+    guard.registrar_bloqueio('OFFICE', 'saida', '656')
+    assert int(models.get_param('bloqueios_seguidos_saida') or 0) == 2
+    guard.registrar_bloqueio('OFFICE', 'saida', '137')   # sucesso -> reseta
+    assert int(models.get_param('bloqueios_seguidos_saida') or 0) == 0
+
+
+def test_saida_honra_cooldown_da_entrada_do_escritorio():
+    """Fix B: se o CNPJ do escritorio (tambem cliente) esta em cooldown de entrada,
+    a saida NAO consulta (evita 2 distNSU no mesmo CNPJ dentro da 1h -> 656)."""
+    _db()
+    models.set_param('office_cnpj', _CNPJ)
+    # _CNPJ ja existe como empresa (via _db). Coloca a entrada dele em cooldown:
+    with models.con() as c:
+        c.execute("UPDATE empresas SET bloqueado_nfe_ate='2099-01-01 00:00:00' WHERE cnpj=?", (_CNPJ,))
+    d = guard.pode(_CNPJ, 'saida')
+    assert d.liberado is False
+    assert d.parada == 'cooldown'
+    # sem cooldown na entrada -> saida liberada
+    with models.con() as c:
+        c.execute("UPDATE empresas SET bloqueado_nfe_ate=NULL WHERE cnpj=?", (_CNPJ,))
+    assert guard.pode(_CNPJ, 'saida').liberado is True
+
+
 def test_g5_109_retomavel_e_cooldown():
     _db()
     assert '109' in RETOMAR
