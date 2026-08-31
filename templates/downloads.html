@@ -46,6 +46,16 @@
     <a href="{{ url_for('downloads', aplicado='1') }}" class="btn btn-ghost sm">Todas competências</a>
   </form>
   <p class="count" style="margin:12px 0 0">{{ n_emp }} empresa(s) · {{ n_zip }} pacote(s) no filtro atual{% if mes or ano %} · <b>{{ (mes ~ '/' ~ ano) if (mes and ano) else (ano or mes) }}</b>{% endif %}. <span class="muted">Por padrão mostra o mês anterior (apuração).</span></p>
+
+  {% if papel_atual=='admin' %}
+  <form method="post" action="{{ url_for('nfse_rebaixar_historico') }}" class="dlrow" style="margin-top:12px;padding-top:12px;border-top:1px dashed var(--line)"
+        onsubmit="return confirm('Rebaixar histórico de NFS-e?\n\nIsto zera o marcador (ultNSU) das empresas-alvo e re-busca TUDO do ADN na próxima varredura. Não apaga nenhum arquivo (o salvamento é idempotente).\n\nUse quando a empresa TEM certificado mas aparece 0 nota (XML sumiu do disco).');">
+    <span class="doctag nfse">NFS-e</span>
+    <input class="selk" name="alvo" value="{{ q }}" placeholder="empresa (nome/CNPJ) — vazio = TODAS" style="width:280px">
+    <button class="btn btn-ghost sm" title="Recupera NFS-e que sumiram do disco: zera o ultNSU e re-busca do ADN">↻ Rebaixar histórico NFS-e</button>
+    <span class="muted" style="font-size:12px">Some quando o XML foi perdido (ex.: restauração sem XML) e o banco achou que já tinha baixado.</span>
+  </form>
+  {% endif %}
 </div>
 
 <div class="card">

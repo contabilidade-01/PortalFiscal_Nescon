@@ -924,6 +924,41 @@ def downloads():
                            ano=ano, mes=mes, doc_f=doc_f, anos=sorted(anos, reverse=True),
                            n_emp=len(itens), n_zip=n_zip)
 
+@app.route('/nfse/rebaixar-historico', methods=['POST'])
+@admin_required
+def nfse_rebaixar_historico():
+    """Recupera NFS-e que sumiram do disco: zera ultnsu_nfse (e cooldown/circuito) das
+    empresas-alvo para a proxima varredura REBAIXAR tudo do ADN (que retem as notas).
+    Cenario: XML perdido no periodo sem volume + backup sem XML -> banco achava que ja
+    tinha baixado (ultNSU adiantado) e nunca mais buscava. NAO apaga nada; salvamento
+    e idempotente. So NFS-e (NF-e tem historico gigante e e tratada a parte)."""
+    alvo = (request.form.get('alvo') or '').strip()
+    so_digitos = re.sub(r'\D', '', alvo)
+    with models.con() as c:
+        if not alvo:
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE ativo=1 AND puxa_nfse=1").fetchall()
+        elif len(so_digitos) >= 11:
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE puxa_nfse=1 AND cnpj=?",
+                             (so_digitos,)).fetchall()
+        else:
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE puxa_nfse=1 AND lower(nome) LIKE ?",
+                             ('%' + alvo.lower() + '%',)).fetchall()
+        if not emps:
+            flash('Nenhuma empresa NFS-e encontrada para "%s".' % (alvo or 'todas'), 'erro')
+            return redirect(url_for('downloads', doc='NFSe', q=alvo))
+        ids = [e['id'] for e in emps]
+        ph = ','.join('?' * len(ids))
+        c.execute("UPDATE empresas SET ultnsu_nfse='0', bloqueado_nfse_ate=NULL, "
+                  "bloqueios_seguidos_nfse=0, circuito_nfse=0 WHERE id IN (%s)" % ph, ids)
+        c.execute("INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)",
+                  ('nfse_reset', '-', 'ADMIN', datetime.now().strftime('%Y-%m-%d %H:%M'), 0, 'reset',
+                   'rebaixar historico NFS-e: %d empresa(s)' % len(emps)))
+    escopo = emps[0]['cnpj'] if len(emps) == 1 else 'todas'
+    worker.enfileirar('nfse', escopo=escopo, origem='manual', user_id=session.get('uid'))
+    flash('NFS-e: %d empresa(s) marcada(s) para rebaixar do zero. Varredura enfileirada — '
+          'acompanhe no Painel; os XML voltam à tela em seguida.' % len(emps), 'ok')
+    return redirect(url_for('downloads', doc='NFSe', q=(emps[0]['nome'] if len(emps) == 1 else '')))
+
 # ---- Download por competencia + tipo (ZIP) ----
 @app.route('/download')
 @perm_required('download')
