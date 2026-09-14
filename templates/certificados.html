@@ -40,6 +40,7 @@
       <button class="btn btn-ghost" style="margin-top:14px">Varrer e vincular</button>
     </form>
   </div>
+  {% if saidas_ativo %}
   <div class="card">
     <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14"/></svg> Cert do escritório <span class="tag sai">saídas</span></h2>
     <p class="desc">Puxa as vendas via autXML. {% if office %}<b style="color:var(--ok)">Configurado ({{ office }}).</b>{% endif %}</p>
@@ -50,6 +51,7 @@
       <button class="btn btn-primary" style="margin-top:14px">Salvar escritório</button>
     </form>
   </div>
+  {% endif %}
 </div>
 
 <!-- Abas Com / Sem -->
@@ -85,14 +87,14 @@
   <div class="card">
     <p class="desc" style="margin-top:0">Empresas da base sem certificado vinculado. Use os controles acima para vincular (upload ou pasta).</p>
     <div class="tbl-wrap"><table style="min-width:560px">
-      <thead><tr><th>Empresa</th><th>CNPJ</th><th>Ativo</th><th>Puxadores</th></tr></thead>
+      <thead><tr><th>Empresa</th><th>CNPJ</th><th>Ativo</th><th>Ambientes marcados</th></tr></thead>
       <tbody>
       {% for e in sem %}
       <tr>
         <td class="empresa-nome">{{ e['nome']|title }}</td>
         <td class="mono">{{ e['cnpj'] }}</td>
         <td>{% if e['ativo'] %}<span class="pill on dot">ativa</span>{% else %}<span class="pill off dot">inativa</span>{% endif %}</td>
-        <td>{% if e['puxa_nfe'] %}<span class="tag ent">NF-e</span>{% endif %} {% if e['puxa_nfse'] %}<span class="tag sai">NFS-e</span>{% endif %}</td>
+        <td>{% if e['puxa_nfe'] %}<span class="tag ent">NF-e Ent.</span>{% endif %} {% if e['puxa_nfse_prestado'] %}<span class="tag sai">NFS-e Emit.</span>{% endif %} {% if e['puxa_nfse_tomado'] %}<span class="tag sai">NFS-e Tom.</span>{% endif %} {% if e['puxa_nfce'] %}<span class="tag">NFC-e</span>{% endif %}</td>
       </tr>
       {% else %}<tr><td colspan="4" class="muted" style="text-align:center;padding:26px">Todas as empresas têm certificado. 🎉</td></tr>{% endfor %}
       </tbody>

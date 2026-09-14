@@ -54,6 +54,16 @@ def _ja_na_fila(tipo, escopo):
                       (tipo, escopo or 'todas')).fetchone()
         return r is not None
 
+def cancelar_saidas_desligadas():
+    """Retomadas de 'nfe_saidas' que ficaram na fila de antes do desligamento viram
+    'cancelado' (senao apareceriam como concluidas com 0 docs para sempre)."""
+    if models.SAIDAS_ESCRITORIO_ATIVO:
+        return 0
+    with models.con() as c:
+        return c.execute("""UPDATE jobs SET status='cancelado', terminado=?,
+                                   mensagem='NF-e Saídas pelo escritório foi desligada.'
+                            WHERE tipo='nfe_saidas' AND status='fila'""", (agora(),)).rowcount
+
 def _completo_agendado_hoje():
     """True se ja existe um 'completo' de origem 'agendado' criado hoje, ou um
     'completo' ainda ativo (fila/rodando). Evita sweep diario duplicado por restart."""
@@ -101,10 +111,13 @@ def _upd(jid, **kw):
         c.execute('UPDATE jobs SET %s WHERE id=?' % sets, tuple(kw.values()) + (jid,))
 
 def _empresas(escopo, col):
+    """Empresas da varredura. 'todas' respeita a marcacao do ambiente (COND_MOTOR:
+    NFS-e entra se emitidas OU tomados estiver marcado); CNPJ explicito ignora a marca."""
+    cond = models.COND_MOTOR.get(col, '%s=1' % col)
     with models.con() as c:
         if escopo and escopo != 'todas':
             return c.execute('SELECT * FROM empresas WHERE cnpj=? AND senha_ok=1', (escopo,)).fetchall()
-        return c.execute('SELECT * FROM empresas WHERE ativo=1 AND senha_ok=1 AND %s=1' % col).fetchall()
+        return c.execute('SELECT * FROM empresas WHERE ativo=1 AND senha_ok=1 AND %s' % cond).fetchall()
 
 def _campo_emp(cnpj, col):
     with models.con() as c:
@@ -169,7 +182,9 @@ def _executar(job):
                 pass
             _upd(jid, feitos=i)
             time.sleep(NFE_ENTRE_EMPRESAS)
-    if tipo in ('nfe_saidas', 'completo') and models.get_param('office_cnpj'):
+    # NF-e Saidas pelo escritorio: DESLIGADA (ver models.SAIDAS_ESCRITORIO_ATIVO).
+    if (tipo in ('nfe_saidas', 'completo') and models.SAIDAS_ESCRITORIO_ATIVO
+            and models.get_param('office_cnpj')):
         _upd(jid, atual='Saidas NF-e (escritorio/autXML)', mensagem='Saidas NF-e')
         parada = 'ok'
         try:
@@ -262,6 +277,8 @@ def iniciar_worker():
         _started = True
         # Startup do worker web: limpa TODO job orfao ('so girando' de deploy anterior).
         try: reconciliar_travados(tudo=True)
+        except Exception: pass
+        try: cancelar_saidas_desligadas()
         except Exception: pass
         threading.Thread(target=_loop, daemon=True).start()
         if os.environ.get('FISCAL_CRON', '0') == '1':

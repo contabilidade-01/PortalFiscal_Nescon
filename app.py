@@ -304,34 +304,180 @@ def _contagem_movimentos(cnpjs):
                                 1 for f in os.listdir(d) if f.lower().endswith('.xml'))
     return tot
 
+def _xml_por_empresa(cnpj, doc, subs):
+    """Qtde de XML em disco de um CNPJ, somando as subpastas do ambiente (so listdir)."""
+    base = os.path.join(SAIDA, cnpj); n = 0
+    if not os.path.isdir(base):
+        return 0
+    for comp in os.listdir(base):
+        if not re.match(r'\d{4}-\d{2}$', comp):
+            continue
+        for sub in subs:
+            d = os.path.join(base, comp, doc, sub)
+            if os.path.isdir(d):
+                n += sum(1 for f in os.listdir(d) if f.lower().endswith('.xml'))
+    return n
+
+# motor -> (coluna de cooldown, coluna de circuito, coluna de posicao)
+_MOTOR_COLS = {
+    'nfe': ('bloqueado_nfe_ate', 'circuito_nfe', 'ultnsu_nfe'),
+    'nfse': ('bloqueado_nfse_ate', 'circuito_nfse', 'ultnsu_nfse'),
+    'nfce': ('bloqueado_nfce_ate', 'circuito_nfce', None),
+}
+
+def _situacao(e, motor, agora_s):
+    col_ate, col_circ, _ = _MOTOR_COLS[motor]
+    if e[col_circ]:
+        return 'circuito', None
+    ate = e[col_ate]
+    if ate and agora_s < ate:
+        return 'cooldown', ate
+    return 'livre', None
+
+def _resumo_ambiente(amb, emp, com_linhas=False):
+    """KPIs de um ambiente sobre as empresas visiveis; com_linhas=True monta a tabela."""
+    agora_s = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    marcadas = [e for e in emp if (e[amb['col']] or 0) and e['ativo']]
+    motor = amb['motor']
+    with models.con() as c:
+        ult = {r['cnpj']: r for r in c.execute(
+            '''SELECT x.* FROM execucoes x JOIN (SELECT cnpj, MAX(id) mid FROM execucoes
+               WHERE tipo=? GROUP BY cnpj) u ON u.mid=x.id''', (amb['tipo_exec'],)).fetchall()}
+        ultima = c.execute('SELECT * FROM execucoes WHERE tipo=? ORDER BY id DESC LIMIT 1',
+                           (amb['tipo_exec'],)).fetchone()
+    k = {'marcadas': len(marcadas), 'com_cert': 0, 'sem_cert': 0, 'docs': 0, 'bloqueadas': 0,
+         'ultima': ultima, 'extras': {}}
+    linhas, puladas = [], []
+    for e in marcadas:
+        sit, ate = _situacao(e, motor, agora_s)
+        docs = _xml_por_empresa(e['cnpj'], amb['doc'], amb['subs'])
+        k['docs'] += docs
+        if sit != 'livre':
+            k['bloqueadas'] += 1
+        if e['senha_ok']:
+            k['com_cert'] += 1
+        else:
+            k['sem_cert'] += 1
+            puladas.append(e)
+        if com_linhas:
+            _, _, col_pos = _MOTOR_COLS[motor]
+            linhas.append({'e': e, 'docs': docs, 'sit': sit, 'ate': ate, 'ult': ult.get(e['cnpj']),
+                           'pos': (e[col_pos] if col_pos else None)})
+        for sub, _rot in amb['extras']:
+            k['extras'][sub] = k['extras'].get(sub, 0) + _xml_por_empresa(e['cnpj'], amb['doc'], (sub,))
+    if com_linhas:
+        linhas.sort(key=lambda x: (0 if x['e']['senha_ok'] else 1, (x['e']['nome'] or '').lower()))
+    return k, linhas, puladas
+
+def _job_do_ambiente(amb):
+    """Texto do job rodando agora, se for do motor deste ambiente (ou busca completa)."""
+    rodando, _fila, _rec = worker.status()
+    if rodando and rodando['tipo'] in (amb['tipo_job'], 'completo'):
+        return '%s (%s/%s)' % (rodando['atual'] or rodando['mensagem'] or 'processando',
+                               rodando['feitos'] or 0, rodando['total'] or 0)
+    return None
+
 @app.route('/')
 @login_req
 def dashboard():
+    """Visao geral: um cartao por ambiente de captura (cada um abre sua pagina)."""
     with models.con() as c:
         emp = _scope(c.execute('SELECT * FROM empresas').fetchall())
-        exec_nfe = c.execute("SELECT * FROM execucoes WHERE tipo LIKE 'nfe\\_%' ESCAPE '\\' ORDER BY id DESC LIMIT 12").fetchall()
-        exec_nfse = c.execute("SELECT * FROM execucoes WHERE tipo='nfse' ORDER BY id DESC LIMIT 12").fetchall()
-        exec_nfce = c.execute("SELECT * FROM execucoes WHERE tipo='nfce' ORDER BY id DESC LIMIT 12").fetchall()
-    mov = _contagem_movimentos([e['cnpj'] for e in emp])
-    # contadores das abas = XMLs REAIS em disco (batem com a quebra por movimento abaixo)
-    kpi = dict(
-        total=len(emp), ativas=sum(1 for e in emp if e['ativo']),
-        nfe=sum(1 for e in emp if e['puxa_nfe']), nfse=sum(1 for e in emp if e['puxa_nfse']),
-        nfce=sum(1 for e in emp if (e['puxa_nfce'] or 0)),
-        com_cert=sum(1 for e in emp if e['senha_ok']),
-        docs_nfe=mov['nfe_entrada'] + mov['nfe_saida'] + mov['nfe_resumo'] + mov['nfe_eventos'],
-        docs_nfse=mov['nfse_tomado'] + mov['nfse_prestado'],
-        docs_nfce=mov['nfce_venda'],
-    )
-    office = models.get_param('office_cnpj')
-    rodando, fila, _rec = worker.status()
-    msg = None
-    if rodando:
-        msg = '%s (%s/%s)' % (rodando['atual'] or rodando['mensagem'] or 'processando',
-                              rodando['feitos'] or 0, rodando['total'] or 0)
-    return render_template('dashboard.html', kpi=kpi, office=office, mov=mov,
-                           exec_nfe=exec_nfe, exec_nfse=exec_nfse, exec_nfce=exec_nfce,
-                           status_nfe=msg, status_nfse=msg, status_nfce=msg)
+    cards = []
+    for amb in models.AMBIENTES:
+        k, _l, _p = _resumo_ambiente(amb, emp)
+        cards.append({'a': amb, 'k': k, 'rodando': _job_do_ambiente(amb)})
+    kpi = dict(total=len(emp), ativas=sum(1 for e in emp if e['ativo']),
+               com_cert=sum(1 for e in emp if e['senha_ok']),
+               sem_ambiente=sum(1 for e in emp if e['ativo'] and not any(
+                   (e[a['col']] or 0) for a in models.AMBIENTES)),
+               docs=sum(cd['k']['docs'] for cd in cards))
+    return render_template('dashboard.html', kpi=kpi, cards=cards)
+
+@app.route('/ambiente/<chave>')
+@login_req
+def ambiente(chave):
+    amb = models.AMBIENTE_POR_CHAVE.get(chave)
+    if not amb:
+        abort(404)
+    q = (request.args.get('q') or '').strip().lower()
+    with models.con() as c:
+        emp = _scope(c.execute('SELECT * FROM empresas').fetchall())
+        execs = c.execute('SELECT * FROM execucoes WHERE tipo=? ORDER BY id DESC LIMIT 15',
+                          (amb['tipo_exec'],)).fetchall()
+    k, linhas, puladas = _resumo_ambiente(amb, emp, com_linhas=True)
+    if q:
+        linhas = [x for x in linhas if q in (x['e']['nome'] or '').lower() or q in (x['e']['cnpj'] or '')]
+    # execucoes so das empresas visiveis e marcadas neste ambiente
+    cnpjs = {e['cnpj'] for e in emp if (e[amb['col']] or 0)}
+    execs = [x for x in execs if x['cnpj'] in cnpjs]
+    return render_template('ambiente.html', amb=amb, k=k, linhas=linhas, puladas=puladas,
+                           execs=execs, q=request.args.get('q', ''), rodando=_job_do_ambiente(amb),
+                           ambientes=models.AMBIENTES)
+
+@app.route('/ambiente/<chave>/puxar', methods=['POST'])
+@login_req
+def ambiente_puxar(chave):
+    """Puxa o ambiente: todas as marcadas do escopo, ou so um CNPJ (botao da linha)."""
+    amb = models.AMBIENTE_POR_CHAVE.get(chave)
+    if not amb:
+        abort(404)
+    u = usuario_atual()
+    if not models.tem_permissao(u, amb['perm']):
+        flash('Você não tem permissão para puxar %s.' % amb['rotulo'], 'erro')
+        return redirect(url_for('ambiente', chave=chave))
+    cnpj = re.sub(r'\D', '', request.form.get('cnpj') or '')
+    uid = session.get('uid')
+    if cnpj:
+        if not _pode_ver_cnpj(cnpj):
+            abort(403)
+        worker.enfileirar(amb['tipo_job'], escopo=cnpj, origem='manual', user_id=uid)
+        flash('%s enfileirada para %s — acompanhe na barra de progresso.' % (amb['rotulo'], cnpj), 'ok')
+    elif models.cnpjs_visiveis(u) is None:
+        worker.enfileirar(amb['tipo_job'], escopo='todas', origem='manual', user_id=uid)
+        flash('%s enfileirada para todas as empresas marcadas.' % amb['rotulo'], 'ok')
+    else:
+        # operador com escopo: so as empresas dele marcadas NESTE ambiente
+        with models.con() as c:
+            vis = set(models.cnpjs_visiveis(u) or [])
+            alvos = [r['cnpj'] for r in c.execute(
+                'SELECT cnpj FROM empresas WHERE ativo=1 AND senha_ok=1 AND %s=1' % amb['col']).fetchall()
+                if r['cnpj'] in vis]
+        for cn in alvos:
+            worker.enfileirar(amb['tipo_job'], escopo=cn, origem='manual', user_id=uid)
+        flash('%s enfileirada (%d empresa(s)).' % (amb['rotulo'], len(alvos)) if alvos
+              else 'Nenhuma empresa marcada com certificado no seu escopo.', 'ok' if alvos else 'erro')
+    return redirect(url_for('ambiente', chave=chave))
+
+@app.route('/parametros', methods=['GET', 'POST'])
+@admin_required
+def parametros_captura():
+    """Tela unica de marcacao: empresas x ambientes de captura."""
+    if request.method == 'POST':
+        ids = [int(i) for i in request.form.getlist('ids') if i.isdigit()]
+        with models.con() as c:
+            for eid in ids:
+                vals = [1 if request.form.get('%s_%d' % (a['col'], eid)) else 0 for a in models.AMBIENTES]
+                c.execute('UPDATE empresas SET %s WHERE id=?' % ','.join(
+                    '%s=?' % a['col'] for a in models.AMBIENTES), vals + [eid])
+            models.sync_puxa_nfse(c)
+        flash('Parâmetros de captura salvos (%d empresa(s)).' % len(ids), 'ok')
+        return redirect(url_for('parametros_captura', q=request.form.get('q', ''),
+                                filtro=request.form.get('filtro', '')))
+    q = (request.args.get('q') or '').strip().lower()
+    filtro = request.args.get('filtro', '')
+    with models.con() as c:
+        emp = c.execute('SELECT * FROM empresas ORDER BY ativo DESC, nome').fetchall()
+    tot = {a['chave']: sum(1 for e in emp if e['ativo'] and (e[a['col']] or 0)) for a in models.AMBIENTES}
+    def _ok(e):
+        if q and q not in (e['nome'] or '').lower() and q not in (e['cnpj'] or ''):
+            return False
+        nenhum = not any((e[a['col']] or 0) for a in models.AMBIENTES)
+        return {'': True, 'ativas': bool(e['ativo']), 'nenhum': bool(e['ativo']) and nenhum,
+                'sem_cert': not e['senha_ok'], 'com_cert': bool(e['senha_ok'])}.get(filtro, True)
+    lista = [e for e in emp if _ok(e)]
+    return render_template('parametros_captura.html', empresas=lista, ambientes=models.AMBIENTES,
+                           tot=tot, q=request.args.get('q', ''), filtro=filtro, total=len(emp))
 
 @app.route('/clientes')
 @login_req
@@ -366,17 +512,17 @@ def certificados():
         com.append({'e': e, 'st': st, 'dias': dias})
     kpi = {'com': len(com), 'sem': len(sem), 'sem_ativas': sum(1 for s in sem if s['ativo']),
            'venc': venc, 'vencendo': vencendo}
-    return render_template('certificados.html', com=com, sem=sem, kpi=kpi, office=models.get_param('office_cnpj'))
+    return render_template('certificados.html', com=com, sem=sem, kpi=kpi, office=models.get_param('office_cnpj'),
+                           saidas_ativo=models.SAIDAS_ESCRITORIO_ATIVO)
 
 @app.route('/clientes/<int:eid>/salvar', methods=['POST'])
 @admin_required
 def cliente_salvar(eid):
     f = request.form
+    # Marcacao de ambientes NAO e mais editada aqui: fica em Parametros de captura e no cadastro.
     with models.con() as c:
-        c.execute('''UPDATE empresas SET puxa_nfe=?, puxa_nfse=?, puxa_nfce=?, metodo_saida=?, emissor=?, ativo=? WHERE id=?''',
-                  (1 if f.get('puxa_nfe') else 0, 1 if f.get('puxa_nfse') else 0, 1 if f.get('puxa_nfce') else 0,
-                   f.get('metodo_saida') or 'a_verificar', f.get('emissor') or '',
-                   1 if f.get('ativo') else 0, eid))
+        c.execute('UPDATE empresas SET emissor=?, ativo=? WHERE id=?',
+                  (f.get('emissor') or '', 1 if f.get('ativo') else 0, eid))
     flash('Cliente atualizado.', 'ok')
     return redirect(url_for('clientes', q=request.args.get('q', '')))
 
@@ -400,6 +546,10 @@ def _anexo(s):
     s = (s or 'I').upper().strip()
     return s if s in ('I', 'II', 'III', 'IV', 'V') else 'I'
 
+def _flags_ambientes(f):
+    """{coluna: 0/1} dos ambientes a partir do formulario (checkbox name = coluna)."""
+    return {a['col']: (1 if f.get(a['col']) else 0) for a in models.AMBIENTES}
+
 @app.route('/clientes/novo', methods=['GET', 'POST'])
 @admin_required
 def cliente_novo():
@@ -412,16 +562,19 @@ def cliente_novo():
         with models.con() as c:
             if c.execute('SELECT 1 FROM empresas WHERE cnpj=?', (cnpj,)).fetchone():
                 flash('Já existe cliente com esse CNPJ.', 'erro'); return redirect(url_for('clientes'))
+            fl = _flags_ambientes(f)
             c.execute('''INSERT INTO empresas(cnpj,nome,uf,cuf,whatsapp,responsavel,email,emissor,marketplace,
-                         metodo_saida,puxa_nfe,puxa_nfse,puxa_nfce,ativo,obs,simples_anexo,simples_rbt12,origem,criado)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                         metodo_saida,puxa_nfe,puxa_nfse_prestado,puxa_nfse_tomado,puxa_nfce,ativo,obs,
+                         simples_anexo,simples_rbt12,origem,criado)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                       (cnpj, f.get('nome', ''), uf, cuf, f.get('whatsapp', ''), f.get('responsavel', ''),
                        f.get('email', ''), f.get('emissor', ''), f.get('marketplace', ''),
-                       f.get('metodo_saida', 'a_verificar'), 1 if f.get('puxa_nfe') else 0,
-                       1 if f.get('puxa_nfse') else 0, 1 if f.get('puxa_nfce') else 0,
+                       f.get('metodo_saida', 'a_verificar'), fl['puxa_nfe'],
+                       fl['puxa_nfse_prestado'], fl['puxa_nfse_tomado'], fl['puxa_nfce'],
                        1 if f.get('ativo') else 0, f.get('obs', ''),
                        _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')),
                        'manual', datetime.now().isoformat(timespec='seconds')))
+            models.sync_puxa_nfse(c)
         flash('Cliente cadastrado.', 'ok'); return redirect(url_for('clientes'))
     return render_template('cliente_form.html', e=None)
 
@@ -435,16 +588,18 @@ def cliente_editar(eid):
     if request.method == 'POST':
         f = request.form
         uf, cuf = _uf_cuf(f.get('uf'))
+        fl = _flags_ambientes(f)
         with models.con() as c:
             c.execute('''UPDATE empresas SET nome=?,uf=?,cuf=?,whatsapp=?,responsavel=?,email=?,emissor=?,
-                         marketplace=?,metodo_saida=?,puxa_nfe=?,puxa_nfse=?,puxa_nfce=?,ativo=?,obs=?,
-                         simples_anexo=?,simples_rbt12=? WHERE id=?''',
+                         marketplace=?,metodo_saida=?,puxa_nfe=?,puxa_nfse_prestado=?,puxa_nfse_tomado=?,
+                         puxa_nfce=?,ativo=?,obs=?,simples_anexo=?,simples_rbt12=? WHERE id=?''',
                       (f.get('nome', ''), uf, cuf, f.get('whatsapp', ''), f.get('responsavel', ''),
                        f.get('email', ''), f.get('emissor', ''), f.get('marketplace', ''),
-                       f.get('metodo_saida', 'a_verificar'), 1 if f.get('puxa_nfe') else 0,
-                       1 if f.get('puxa_nfse') else 0, 1 if f.get('puxa_nfce') else 0,
+                       f.get('metodo_saida', 'a_verificar'), fl['puxa_nfe'],
+                       fl['puxa_nfse_prestado'], fl['puxa_nfse_tomado'], fl['puxa_nfce'],
                        1 if f.get('ativo') else 0, f.get('obs', ''),
                        _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')), eid))
+            models.sync_puxa_nfse(c)
         flash('Cliente atualizado.', 'ok'); return redirect(url_for('clientes'))
     return render_template('cliente_form.html', e=e)
 
@@ -588,7 +743,7 @@ STATUS_LABEL = {
 }
 
 @app.route('/execucoes')
-@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas', 'exec_nfe_saidas',
+@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas',
                'exec_nfse', 'exec_nfce', 'exec_ciencia')
 def execucoes():
     with models.con() as c:
@@ -610,8 +765,7 @@ def execucoes():
     nfce_di = (models.get_param('nfce_data_inicial') or datetime.now().strftime('%Y-%m-01'))[:10]
     periodos = {
         'nfe_entradas': 'Incremental por NSU — continua de onde parou (não repete o que já baixou).',
-        'nfe_saidas': 'Incremental por NSU, pelo certificado do escritório (autXML).',
-        'nfse': 'Incremental por NSU no Portal Nacional (ADN).',
+        'nfse': 'Incremental por NSU no Portal Nacional (ADN) — uma consulta traz emitidas e tomados.',
         'nfce': 'Por período: de %s até hoje (limite %s por rodada). Ajuste em Configurações.'
                 % (nfce_di, models.get_param('nfce_limite') or '500'),
         'ciencia': 'Só as NF-e de entrada com ciência pendente (evento 210210).',
@@ -641,7 +795,7 @@ def execucao_nova():
     return redirect(url_for('execucoes') if models.tem_permissao(u, 'ver_execucoes') else url_for('dashboard'))
 
 @app.route('/jobs/<int:jid>/cancelar', methods=['POST'])
-@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas', 'exec_nfe_saidas',
+@perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas',
                'exec_nfse', 'exec_nfce', 'exec_ciencia')
 def job_cancelar(jid):
     with models.con() as c:
@@ -819,7 +973,7 @@ def cert_office():
         flash('Certificado do escritório inválido: %s' % str(e)[:50], 'erro'); return redirect(url_for('certificados'))
     models.set_param('office_cnpj', cnpj); models.set_param('office_arquivo', path)
     models.set_param('office_senha', senha); models.set_param('office_cuf', certs.UF_COD.get(uf, '35'))
-    flash('Escritório configurado: %s. Saídas NFe habilitadas.' % nome, 'ok')
+    flash('Certificado do escritório salvo: %s.' % nome, 'ok')
     return redirect(url_for('certificados'))
 
 # ---- Execução (fila de jobs em background) ----
@@ -834,8 +988,12 @@ def run_nfe_entradas():
     return redirect(url_for('dashboard'))
 
 @app.route('/run/nfe/saidas', methods=['POST'])
-@perm_required('exec_nfe_saidas')
+@admin_required
 def run_nfe_saidas():
+    if not models.SAIDAS_ESCRITORIO_ATIVO:
+        flash('NF-e Saídas pelo escritório está desligada: as vendas de cada empresa já chegam '
+              'em NF-e Entradas (vendas próprias).', 'erro')
+        return redirect(url_for('ambiente', chave='nfe_entradas'))
     n = _enfileirar_escopo('nfe_saidas', user_id=session.get('uid'))
     if n == 0:
         flash('Nenhuma empresa no seu escopo.', 'erro')
@@ -935,13 +1093,14 @@ def nfse_rebaixar_historico():
     alvo = (request.form.get('alvo') or '').strip()
     so_digitos = re.sub(r'\D', '', alvo)
     with models.con() as c:
+        nfse = models.COND_MOTOR['puxa_nfse']  # emitidas OU tomados
         if not alvo:
-            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE ativo=1 AND puxa_nfse=1").fetchall()
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE ativo=1 AND %s" % nfse).fetchall()
         elif len(so_digitos) >= 11:
-            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE puxa_nfse=1 AND cnpj=?",
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE %s AND cnpj=?" % nfse,
                              (so_digitos,)).fetchall()
         else:
-            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE puxa_nfse=1 AND lower(nome) LIKE ?",
+            emps = c.execute("SELECT id,cnpj,nome FROM empresas WHERE %s AND lower(nome) LIKE ?" % nfse,
                              ('%' + alvo.lower() + '%',)).fetchall()
         if not emps:
             flash('Nenhuma empresa NFS-e encontrada para "%s".' % (alvo or 'todas'), 'erro')
@@ -1599,7 +1758,8 @@ def sefaz_saude():
         ate=models.get_param('bloqueado_saida_ate') or '',
         seguidos=int(models.get_param('bloqueios_seguidos_saida') or '0'),
     )
-    if saida['circuito'] or (saida['ate'] and agora_s < saida['ate']):
+    # Saidas pelo escritorio desligadas: nao mostrar circuito/cooldown antigo (nao consulta mais).
+    if models.SAIDAS_ESCRITORIO_ATIVO and (saida['circuito'] or (saida['ate'] and agora_s < saida['ate'])):
         bloqueados.insert(0, dict(
             cnpj=office_cnpj or 'escritorio', nome='Escritório (saídas autXML)',
             servico='saida', rotulo='Saídas NF-e', cor='vermelho' if saida['circuito'] else 'amarelo',
@@ -1610,7 +1770,8 @@ def sefaz_saude():
     m24, m7 = _mapa(k24), _mapa(k7)
     max_top = max([t['n'] for t in top] or [1])
     return render_template('sefaz_saude.html', cards=cards, bloqueados=bloqueados, ocorr=ocorr,
-                           m24=m24, m7=m7, top=top, max_top=max_top, saida=saida,
+                           m24=m24, m7=m7, top=top, max_top=max_top,
+                           saida=(saida if models.SAIDAS_ESCRITORIO_ATIVO else dict(circuito=False, ate='', seguidos=0)),
                            office_cnpj=office_cnpj, limiar=guard.CIRCUITO_LIMIAR,
                            guard_ativo=guard.GUARD_ATIVO)
 

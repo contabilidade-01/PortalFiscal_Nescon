@@ -45,10 +45,14 @@
         <div><label>Simples — RBT12 (receita 12 meses, R$)</label><input name="simples_rbt12" value="{{ (e['simples_rbt12'] or '') if e else '' }}" placeholder="ex: 180000" inputmode="decimal"></div>
         <div class="full"><label>Observações</label><input name="obs" value="{{ e['obs'] if e else '' }}"></div>
       </div>
+      <label style="margin-top:18px">Ambientes de captura <span class="muted" style="font-weight:500">— também editáveis em lote em Parâmetros de captura</span></label>
+      <div class="chkrow" style="margin-top:6px">
+        <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if (e['puxa_nfe'] if e else 1) }}> NF-e Entradas</label>
+        <label class="chk"><input type="checkbox" name="puxa_nfse_prestado" {{ 'checked' if (e['puxa_nfse_prestado'] if e else 1) }}> NFS-e Emitidas</label>
+        <label class="chk"><input type="checkbox" name="puxa_nfse_tomado" {{ 'checked' if (e['puxa_nfse_tomado'] if e else 1) }}> NFS-e Tomados</label>
+        <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if (e['puxa_nfce'] if e else 0) }}> NFC-e (varejo SP)</label>
+      </div>
       <div class="chkrow">
-        <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if (e['puxa_nfe'] if e else 1) }}> Puxa NF-e</label>
-        <label class="chk"><input type="checkbox" name="puxa_nfse" {{ 'checked' if (e['puxa_nfse'] if e else 1) }}> Puxa NFS-e</label>
-        <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if (e['puxa_nfce'] if e else 0) }}> Puxa NFC-e (varejo SP)</label>
         <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (e['ativo'] if e else 1) }}> Cliente ativo</label>
       </div>
 

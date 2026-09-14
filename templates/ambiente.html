@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% block titulo %}{{ amb.rotulo }}{% endblock %}
+{% block corpo %}
+<style>
+.amb-nav{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:18px}
+.amb-nav a{text-decoration:none;font-size:13px;font-weight:700;padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--surface);color:var(--sub)}
+.amb-nav a.on{color:#fff;background:var(--ac);border-color:var(--ac)}
+.hero{border-top:4px solid var(--ac)}
+.hero h2 .dot{width:10px;height:10px;border-radius:50%;background:var(--ac)}
+.movbar{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
+.mv{display:flex;align-items:center;gap:8px;font-size:13px;padding:10px 14px;border-radius:11px;border:1px solid var(--line);background:var(--surface2);flex:1 1 180px}
+.mv .txt{color:var(--sub)} .mv b{font-size:16px;margin-left:auto;font-variant-numeric:tabular-nums}
+.mv.main{border-color:color-mix(in srgb,var(--ac) 45%,var(--line))}
+.warnbox{margin-top:14px;padding:12px 15px;border-radius:12px;font-size:13px;background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 35%,var(--line))}
+.warnbox b{color:var(--txt)}
+.st{font-size:11px;font-weight:700;padding:3px 9px;border-radius:7px;white-space:nowrap}
+.st.ok{background:var(--okbg);color:var(--ok)} .st.wr{background:color-mix(in srgb,var(--warn) 15%,transparent);color:#b45309}
+.st.er{background:var(--errbg);color:var(--err)} .st.nt{background:var(--surface2);color:var(--sub);border:1px solid var(--line)}
+:root[data-theme="dark"] .st.wr{color:#fbbf24}
+.filtro{display:flex;gap:8px;align-items:center}
+.filtro input{width:220px;padding:8px 11px;font-size:13px}
+td.num{font-variant-numeric:tabular-nums;font-weight:700}
+</style>
+
+{% set paradas = {
+  'fim': ('Tudo baixado','ok'), '137': ('Nada novo','ok'), 'ok': ('Concluída','ok'),
+  'cap': ('Teto da rodada','nt'), 'limite': ('Limite da rodada','nt'),
+  '656': ('Bloqueio temporário','wr'), '429': ('Limite de acessos','wr'), '108': ('SEFAZ instável','wr'),
+  '109': ('SEFAZ paralisado','wr'), 'cooldown': ('Em espera','wr'),
+  'circuito_aberto': ('Circuito aberto','er'), 'sem_certificado': ('Sem certificado','er'),
+  'uf_nao_sp': ('Fora de SP','nt'), 'erro': ('Falhou','er'), 'resposta_invalida': ('Resposta inválida','er'),
+  'erro_rede': ('Erro de rede','er'), 'erro_cert': ('Erro no certificado','er'), 'reset': ('Rebaixar histórico','nt')
+} %}
+{# parada pode vir com detalhe ('erro_rede:...', 'http_503', 'cStat_215'): rotula pelo prefixo #}
+{% macro rot(parada) -%}
+  {%- set p = (parada or '')|string -%}
+  {%- set base = p.split(':')[0] -%}
+  {%- if base in paradas -%}{%- set r = paradas[base] -%}
+  {%- elif base.startswith('http_') -%}{%- set r = ('HTTP ' ~ base[5:], 'er') -%}
+  {%- elif base.startswith('cStat_') -%}{%- set r = ('cStat ' ~ base[6:], 'wr') -%}
+  {%- else -%}{%- set r = (base or '—', 'nt') -%}{%- endif -%}
+  <span class="st {{ r[1] }}" title="{{ p }}">{{ r[0] }}</span>
+{%- endmacro %}
+
+<div class="amb-nav">
+  {% for a in ambientes %}<a href="{{ url_for('ambiente', chave=a.chave) }}" class="{{ 'on' if a.chave==amb.chave }}" style="--ac:{{ a.cor }}">{{ a.rotulo }}</a>{% endfor %}
+</div>
+
+<div class="card hero" style="--ac:{{ amb.cor }}">
+  <div class="between">
+    <div style="max-width:720px">
+      <h2><span class="dot"></span> {{ amb.rotulo }}</h2>
+      <p class="desc" style="margin:0">{{ amb.desc }}</p>
+    </div>
+    <div class="row" style="align-items:center">
+      {% if papel_atual=='admin' %}<a class="btn btn-ghost sm" href="{{ url_for('parametros_captura') }}">Marcar empresas</a>{% endif %}
+      {% if tem_perm(amb.perm) %}
+      <form method="post" action="{{ url_for('ambiente_puxar', chave=amb.chave) }}" style="margin:0"
+            onsubmit="return confirm('Puxar {{ amb.rotulo }} de todas as empresas marcadas{{ ' (a consulta ao ADN traz emitidas e tomados juntos)' if amb.motor=='nfse' else '' }}?');">
+        <button class="btn btn-primary" {{ 'disabled' if not k.com_cert }}>Puxar {{ amb.rotulo }}</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="kpis" style="margin:18px 0 0">
+    <div class="kpi"><div class="val">{{ k.marcadas }}</div><div class="lab">Empresas marcadas</div></div>
+    <div class="kpi"><div class="val">{{ k.com_cert }}</div><div class="lab">Com certificado (entram na busca)</div></div>
+    <div class="kpi"><div class="val">{{ k.docs }}</div><div class="lab">XML em disco</div></div>
+    <div class="kpi"><div class="val" style="color:{{ 'var(--warn)' if k.bloqueadas else 'inherit' }}">{{ k.bloqueadas }}</div><div class="lab">Em espera / circuito</div></div>
+  </div>
+
+  {% if amb.extras %}
+  <div class="movbar">
+    <div class="mv main"><span class="txt">Entradas · compras</span><b>{{ k.docs }}</b></div>
+    {% for sub, rot in amb.extras %}<div class="mv"><span class="txt">{{ rot }}</span><b>{{ k.extras.get(sub, 0) }}</b></div>{% endfor %}
+  </div>
+  {% endif %}
+
+  {% if rodando %}<div class="status-strip"><span class="spin"></span> {{ rodando }}</div>{% endif %}
+
+  {% if puladas %}
+  <div class="warnbox">⚠️ <b>{{ puladas|length }} empresa(s) marcada(s) sem certificado válido — são puladas na busca:</b>
+    {% for e in puladas[:12] %}{{ e['nome']|title }}{{ ', ' if not loop.last }}{% endfor %}{% if puladas|length > 12 %} e mais {{ puladas|length - 12 }}{% endif %}.
+    Vincule em <a href="{{ url_for('certificados') }}">Certificados</a>.
+  </div>
+  {% endif %}
+  {% if amb.motor == 'nfse' %}
+  <p class="muted" style="margin:12px 0 0">A NFS-e nacional usa uma única consulta por empresa: puxar aqui também atualiza a outra página de NFS-e. Esta página mostra só as empresas marcadas em <b>{{ amb.rotulo }}</b> e conta só esse tipo de nota.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="between" style="margin-bottom:12px">
+    <h2 style="margin:0">Empresas neste ambiente <span class="tag">{{ linhas|length }}</span></h2>
+    <form method="get" class="filtro"><input name="q" value="{{ q }}" placeholder="filtrar nome ou CNPJ"><button class="btn btn-ghost sm">Filtrar</button>{% if q %}<a class="btn btn-ghost sm" href="{{ url_for('ambiente', chave=amb.chave) }}">Limpar</a>{% endif %}</form>
+  </div>
+  <div class="tbl-wrap"><table style="min-width:940px">
+    <thead><tr><th>Empresa</th><th>Certificado</th><th>XML</th><th>Última busca</th><th>{{ 'Posição (NSU)' if amb.motor != 'nfce' else 'Última execução' }}</th><th>Situação</th><th></th></tr></thead>
+    <tbody>
+    {% for x in linhas %}{% set e = x.e %}
+    <tr>
+      <td><div class="empresa-nome">{{ e['nome']|title }}</div><div class="mono">{{ e['cnpj'] }}</div></td>
+      <td>{% if e['senha_ok'] %}<span class="st ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="st er">falta</span>{% endif %}</td>
+      <td class="num">{{ x.docs }}</td>
+      <td>{% if x.ult %}
+        <div class="muted">{{ x.ult['quando'] }} · {{ x.ult['docs'] }} doc(s)</div>
+        {{ rot(x.ult['parada']) }}
+      {% else %}<span class="muted">nunca</span>{% endif %}</td>
+      <td class="mono">{% if amb.motor != 'nfce' %}{{ (x.pos or 0)|int }}{% else %}{{ e['ultima_exec_nfce'] or '—' }}{% endif %}</td>
+      <td>{% if x.sit == 'circuito' %}<span class="st er">circuito aberto</span>
+          {% elif x.sit == 'cooldown' %}<span class="st wr" title="libera em {{ x.ate }}">espera até {{ x.ate[11:16] }}</span>
+          {% else %}<span class="st ok">livre</span>{% endif %}</td>
+      <td>{% if tem_perm(amb.perm) and e['senha_ok'] %}
+        <form method="post" action="{{ url_for('ambiente_puxar', chave=amb.chave) }}" style="margin:0">
+          <input type="hidden" name="cnpj" value="{{ e['cnpj'] }}">
+          <button class="btn btn-ghost sm" {{ 'disabled title="aguarde a espera/rearme"' if x.sit != 'livre' }}>Puxar esta</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted" style="text-align:center;padding:28px">Nenhuma empresa marcada neste ambiente{{ ' com esse filtro' if q }}.{% if papel_atual=='admin' %} <a href="{{ url_for('parametros_captura') }}">Marcar em Parâmetros de captura →</a>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</div>
+
+<div class="card">
+  <h2>Últimas execuções · {{ amb.rotulo }}</h2>
+  <div class="tbl-wrap"><table><thead><tr><th>Quando</th><th>Empresa</th><th>Docs</th><th>Como terminou</th><th>Detalhe</th></tr></thead><tbody>
+    {% for x in execs %}
+    <tr><td class="muted">{{ x['quando'] }}</td><td>{{ x['nome']|title }}</td><td class="num">{{ x['docs'] }}</td><td>{{ rot(x['parada']) }}</td><td class="muted">{{ x['detalhe'] }}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:24px">Sem execuções ainda.</td></tr>{% endfor %}
+  </tbody></table></div>
+</div>
+{% endblock %}

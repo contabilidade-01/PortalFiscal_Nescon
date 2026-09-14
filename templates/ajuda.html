@@ -29,7 +29,7 @@
   <p class="desc">Guia rápido para quem está começando. O objetivo do sistema é <b>baixar automaticamente as notas fiscais dos clientes na SEFAZ/Prefeitura</b> e ajudar a <b>conferir</b> tudo antes da apuração.</p>
   <div class="steps">
     <div class="step"><div class="n">1</div><h4>Cadastrar e conferir o certificado</h4><p>Cada empresa precisa de um <b>certificado digital A1</b> (.pfx) válido — é ele que autoriza baixar as notas. Veja em <a href="{{ url_for('clientes') }}">Clientes</a> e <a href="{{ url_for('certificados') }}">Certificados</a>.</p></div>
-    <div class="step"><div class="n">2</div><h4>Puxar as notas</h4><p>No <a href="{{ url_for('dashboard') }}">Painel</a> você dispara a busca (Entradas, Saídas, NFS-e, NFC-e). Roda em segundo plano — pode navegar/sair que continua. Acompanhe em <a href="{{ url_for('execucoes') }}">Execuções</a>.</p></div>
+    <div class="step"><div class="n">2</div><h4>Marcar e puxar as notas</h4><p>Em <b>Parâmetros de captura</b> (admin) marque em quais ambientes cada empresa entra: <b>NF-e Entradas</b>, <b>NFS-e Emitidas</b>, <b>NFS-e Tomados</b> e <b>NFC-e</b>. Cada ambiente tem sua página (menu Fiscal) com o botão de puxar. Roda em segundo plano — acompanhe em <a href="{{ url_for('execucoes') }}">Execuções</a>.</p></div>
     <div class="step"><div class="n">3</div><h4>Conferir e auditar</h4><p>Em <a href="{{ url_for('fiscal_conferencia') }}">Conferência</a> você vê <b>quantidade e valor</b> por mês (para a tributação). Em <a href="{{ url_for('fiscal_auditoria') }}">Auditoria</a> o sistema aponta se <b>faltou algum número</b> na sequência das notas emitidas.</p></div>
     <div class="step"><div class="n">4</div><h4>Baixar os XMLs</h4><p>Em <a href="{{ url_for('downloads') }}">Downloads</a> você baixa os arquivos XML em ZIP, filtrando por empresa, mês e tipo de nota.</p></div>
   </div>
@@ -70,15 +70,17 @@
     <div class="term"><b>Cancelada</b><p>Nota que foi anulada. <b>Não</b> entra no valor tributado, mas o número dela continua "reservado" na sequência.</p></div>
     <div class="term"><b>Ciência (evento 210210)</b><p>Manifestação de que a empresa "tomou ciência" de uma NF-e de entrada. O sistema faz automaticamente e guarda o protocolo.</p></div>
     <div class="term"><b>Protocolo (nProt)</b><p>Comprovante que a SEFAZ devolve ao registrar um evento (ex.: a Ciência). Fica em <a href="{{ url_for('protocolos') }}" style="color:var(--brand1)">Protocolos</a>.</p></div>
-    <div class="term"><b>autXML</b><p>CNPJ autorizado a baixar o XML de uma nota. É como o escritório puxa as <b>saídas</b> dos clientes.</p></div>
+    <div class="term"><b>Vendas próprias (NF-e)</b><p>NF-e que a própria empresa emitiu. Chegam junto na consulta de <b>NF-e Entradas</b> (a SEFAZ entrega tudo o que envolve o CNPJ) e ficam separadas como saída/venda nos Downloads.</p></div>
   </div>
 </div>
 
 <div class="card">
   <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> O que cada tela faz</h2>
   <table class="screens">
-    <tr><td><a href="{{ url_for('dashboard') }}">Painel</a></td><td>Visão geral + botões para <b>puxar</b> as notas (Entradas, Saídas, NFS-e, NFC-e).</td></tr>
-    <tr><td><a href="{{ url_for('clientes') }}">Clientes</a></td><td>Base única de empresas. Marque quais notas cada uma puxa e o método de saída.</td></tr>
+    <tr><td><a href="{{ url_for('dashboard') }}">Painel</a></td><td>Visão geral: um cartão por ambiente (XML, empresas marcadas, em espera, sem certificado).</td></tr>
+    <tr><td><a href="{{ url_for('ambiente', chave='nfe_entradas') }}">Ambientes</a></td><td><b>NF-e Entradas</b>, <b>NFS-e Emitidas</b>, <b>NFS-e Tomados</b> e <b>NFC-e</b>: cada um lista só as empresas marcadas, com posição, situação e botão de puxar (geral ou por empresa).</td></tr>
+    <tr><td>Parâmetros de captura</td><td>(Admin) Marca em quais ambientes cada empresa entra — em lote, com filtro. Também dá para marcar no Editar do cliente.</td></tr>
+    <tr><td><a href="{{ url_for('clientes') }}">Clientes</a></td><td>Base única de empresas: cadastro, emissor e ativo; mostra os ambientes marcados.</td></tr>
     <tr><td><a href="{{ url_for('certificados') }}">Certificados</a></td><td>Vincular/checar os certificados A1 (validade, empresas sem certificado).</td></tr>
     <tr><td><a href="{{ url_for('downloads') }}">Downloads</a></td><td>Baixar os XMLs em ZIP, filtrando por empresa, mês e tipo.</td></tr>
     <tr><td><a href="{{ url_for('fiscal_conferencia') }}">Conferência</a></td><td><b>Quantidade e valor</b> das notas por mês — base para a tributação.</td></tr>

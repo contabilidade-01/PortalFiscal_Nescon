@@ -110,10 +110,9 @@
   <form method="post" action="{{ url_for('execucao_nova') }}" id="formBusca">
     <div class="tiles">
       {% set opcoes = [
-        ('completo',     'Busca completa',      'Entradas + ciência + saídas + NFS-e + NFC-e, nessa ordem.'),
-        ('nfe_entradas', 'Entradas NF-e',       'As compras que os clientes receberam.'),
-        ('nfe_saidas',   'Saídas NF-e',         'As vendas, pelo certificado do escritório (autXML).'),
-        ('nfse',         'NFS-e',               'Notas de serviço no Portal Nacional.'),
+        ('completo',     'Busca completa',      'NF-e Entradas + ciência + NFS-e + NFC-e, nessa ordem (só empresas marcadas).'),
+        ('nfe_entradas', 'NF-e Entradas',       'As compras que os clientes receberam (e as vendas próprias).'),
+        ('nfse',         'NFS-e',               'Emitidas e tomados no Portal Nacional (uma consulta).'),
         ('nfce',         'NFC-e',               'Vendas de varejo ao consumidor (SP).'),
         ('ciencia',      'Ciência 210210',      'Manifesta as entradas pendentes para liberar o XML completo.')
       ] %}
@@ -148,9 +147,8 @@
 
 <script>
 var PERIODOS = {
-  'completo': 'Roda tudo em sequência: entradas + ciência + saídas + NFS-e + NFC-e (cada um no seu período).',
+  'completo': 'Roda tudo em sequência: NF-e Entradas + ciência + NFS-e + NFC-e (cada um no seu período, só empresas marcadas).',
   'nfe_entradas': {{ periodos['nfe_entradas']|tojson }},
-  'nfe_saidas': {{ periodos['nfe_saidas']|tojson }},
   'nfse': {{ periodos['nfse']|tojson }},
   'nfce': {{ periodos['nfce']|tojson }},
   'ciencia': {{ periodos['ciencia']|tojson }}

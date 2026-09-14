@@ -155,7 +155,8 @@ svg{display:block}
     <div>Portal Fiscal<small>Nescon · NFe + NFSe</small></div>
   </div>
   {% set ep = request.endpoint %}
-  {% set g_fiscal = ep in ['dashboard','clientes','certificados','downloads','cliente_novo','cliente_editar'] %}
+  {% set g_fiscal = ep in ['dashboard','clientes','certificados','downloads','cliente_novo','cliente_editar','ambiente','parametros_captura'] %}
+  {% set amb_atual = (request.view_args or {}).get('chave') if ep=='ambiente' else None %}
   {% set g_analises = ep in ['fiscal_conferencia','fiscal_faturamento','fiscal_auditoria','fiscal_economia','fiscal_economia_mensuracao','fiscal_economia_st','das'] %}
   {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup','sefaz_saude','sefaz_rearmar'] or (ep and ep.startswith('usuario')) %}
   <nav class="topnav">
@@ -163,8 +164,17 @@ svg{display:block}
       <button class="navbtn {{ 'active' if g_fiscal }}">Fiscal <span class="car">▼</span></button>
       <div class="submenu">
         <a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep=='dashboard' }}">Painel</a>
+        <div class="sub-h">Ambientes de captura</div>
+        <a href="{{ url_for('ambiente', chave='nfe_entradas') }}" class="{{ 'active' if amb_atual=='nfe_entradas' }}">NF-e Entradas</a>
+        <a href="{{ url_for('ambiente', chave='nfse_emitidas') }}" class="{{ 'active' if amb_atual=='nfse_emitidas' }}">NFS-e Emitidas</a>
+        <a href="{{ url_for('ambiente', chave='nfse_tomados') }}" class="{{ 'active' if amb_atual=='nfse_tomados' }}">NFS-e Tomados</a>
+        <a href="{{ url_for('ambiente', chave='nfce') }}" class="{{ 'active' if amb_atual=='nfce' }}">NFC-e</a>
+        <div class="sub-h">Cadastro</div>
         <a href="{{ url_for('clientes') }}" class="{{ 'active' if ep in ['clientes','cliente_novo','cliente_editar'] }}">Clientes</a>
         <a href="{{ url_for('certificados') }}" class="{{ 'active' if ep=='certificados' }}">Certificados</a>
+        {% if papel_atual == 'admin' %}
+        <a href="{{ url_for('parametros_captura') }}" class="{{ 'active' if ep=='parametros_captura' }}">Parâmetros de captura</a>
+        {% endif %}
         {% if tem_perm('download') %}
         <a href="{{ url_for('downloads') }}" class="{{ 'active' if ep=='downloads' }}">Downloads</a>
         {% endif %}
@@ -186,12 +196,12 @@ svg{display:block}
       </div>
     </div>
     {% endif %}
-    {% if papel_atual == 'admin' or tem_perm('ver_execucoes') or tem_perm('ver_protocolos') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfe_saidas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
+    {% if papel_atual == 'admin' or tem_perm('ver_execucoes') or tem_perm('ver_protocolos') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_admin }}">{{ 'Admin' if papel_atual=='admin' else 'Operação' }} <span class="car">▼</span></button>
       <div class="submenu">
         <div class="sub-h">Operação</div>
-        {% if papel_atual=='admin' or tem_perm('ver_execucoes') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfe_saidas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
+        {% if papel_atual=='admin' or tem_perm('ver_execucoes') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
         <a href="{{ url_for('execucoes') }}" class="{{ 'active' if ep in ['execucoes','execucao_nova'] }}">Execuções</a>
         {% endif %}
         {% if papel_atual=='admin' %}

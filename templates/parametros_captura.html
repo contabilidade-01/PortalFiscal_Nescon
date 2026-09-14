@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+{% block titulo %}Parâmetros de captura{% endblock %}
+{% block corpo %}
+<style>
+.sumario{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin:4px 0 16px}
+.sumario a{text-decoration:none;color:inherit;background:var(--surface2);border:1px solid var(--line);border-left:4px solid var(--ac);border-radius:12px;padding:10px 14px}
+.sumario b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.sumario span{font-size:12px;color:var(--sub)}
+.barra{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:12px}
+.barra form{display:flex;gap:8px;align-items:center;margin:0}
+.barra input,.barra select{width:auto;padding:8px 11px;font-size:13px}
+th.amb{text-align:center;white-space:nowrap}
+th.amb .h{display:flex;flex-direction:column;align-items:center;gap:4px}
+th.amb .h span{color:var(--ac)}
+th.amb .todos{font-size:10px;font-weight:600;text-transform:none;letter-spacing:0;color:var(--sub);display:flex;align-items:center;gap:4px;cursor:pointer}
+td.amb{text-align:center}
+td.amb input,th.amb input{width:17px;height:17px;margin:0;cursor:pointer;accent-color:var(--brand1)}
+tr.inativa td{opacity:.55}
+tr.mudou{background:color-mix(in srgb,var(--brand1) 7%,transparent)}
+.certb{font-size:11px;font-weight:700;padding:3px 8px;border-radius:7px}
+.certb.ok{background:var(--okbg);color:var(--ok)} .certb.no{background:var(--errbg);color:var(--err)}
+.salvar-fixo{position:sticky;bottom:14px;display:flex;justify-content:flex-end;gap:10px;align-items:center;margin-top:14px}
+.salvar-fixo .info{font-size:12.5px;color:var(--sub);background:var(--surface);border:1px solid var(--line);padding:8px 12px;border-radius:10px;box-shadow:var(--shadow)}
+</style>
+
+<div class="card">
+  <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg> Parâmetros de captura</h2>
+  <p class="desc">Marque em quais ambientes cada empresa entra. Cada ambiente tem sua página e o robô diário só consulta as empresas marcadas (e com certificado válido). <b>NFS-e Emitidas</b> e <b>Tomados</b> usam a mesma consulta ao Portal Nacional: basta um dos dois marcado para a empresa ser consultada; cada página mostra só o tipo marcado.</p>
+
+  <div class="sumario">
+    {% for a in ambientes %}
+    <a href="{{ url_for('ambiente', chave=a.chave) }}" style="--ac:{{ a.cor }}"><b>{{ tot[a.chave] }}</b><span>{{ a.rotulo }} · ativas marcadas</span></a>
+    {% endfor %}
+  </div>
+
+  <div class="barra">
+    <form method="get">
+      <input name="q" value="{{ q }}" placeholder="nome ou CNPJ" style="width:200px">
+      <select name="filtro">
+        {% for v,l in [('','Todas as empresas'),('ativas','Só ativas'),('nenhum','Ativas sem nenhum ambiente'),('com_cert','Com certificado'),('sem_cert','Sem certificado')] %}
+        <option value="{{ v }}" {{ 'selected' if filtro==v }}>{{ l }}</option>{% endfor %}
+      </select>
+      <button class="btn btn-ghost sm">Filtrar</button>
+    </form>
+    <span class="muted">{{ empresas|length }} de {{ total }} empresa(s) na lista</span>
+  </div>
+
+  <form method="post" id="fparam">
+    <input type="hidden" name="q" value="{{ q }}"><input type="hidden" name="filtro" value="{{ filtro }}">
+    <div class="tbl-wrap"><table style="min-width:820px">
+      <thead><tr>
+        <th>Empresa</th><th>Cert.</th>
+        {% for a in ambientes %}
+        <th class="amb" style="--ac:{{ a.cor }}"><div class="h"><span>{{ a.rotulo }}</span>
+          <label class="todos" title="Marcar/desmarcar todas as empresas desta lista"><input type="checkbox" data-col="{{ a.col }}" class="todos-col"> todas</label></div></th>
+        {% endfor %}
+      </tr></thead>
+      <tbody>
+      {% for e in empresas %}
+      <tr class="{{ 'inativa' if not e['ativo'] }}">
+        <td><input type="hidden" name="ids" value="{{ e['id'] }}">
+          <div class="empresa-nome">{{ e['nome']|title }}{% if not e['ativo'] %} <span class="tag">inativa</span>{% endif %}</div>
+          <div class="mono">{{ e['cnpj'] }}{% if e['uf'] %} · {{ e['uf'] }}{% endif %}</div></td>
+        <td>{% if e['senha_ok'] %}<span class="certb ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="certb no">falta</span>{% endif %}</td>
+        {% for a in ambientes %}
+        <td class="amb"><input type="checkbox" name="{{ a.col }}_{{ e['id'] }}" data-col="{{ a.col }}" {{ 'checked' if e[a.col] }}
+          {% if a.chave=='nfce' and e['uf'] and e['uf']|upper != 'SP' %}title="NFC-e só funciona para empresas de SP"{% endif %}></td>
+        {% endfor %}
+      </tr>
+      {% else %}
+      <tr><td colspan="{{ 2 + ambientes|length }}" class="muted" style="text-align:center;padding:28px">Nenhuma empresa com esse filtro.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% if empresas %}
+    <div class="salvar-fixo">
+      <span class="info" id="pendentes">Nenhuma alteração</span>
+      <button class="btn btn-primary">Salvar parâmetros</button>
+    </div>
+    {% endif %}
+  </form>
+</div>
+
+<script>
+(function(){
+  var f = document.getElementById('fparam'); if(!f) return;
+  var boxes = f.querySelectorAll('td.amb input[type=checkbox]');
+  var ini = new Map(); boxes.forEach(function(b){ ini.set(b, b.checked); });
+  var info = document.getElementById('pendentes');
+  function conta(){
+    var n = 0;
+    boxes.forEach(function(b){
+      var mud = b.checked !== ini.get(b); if(mud) n++;
+    });
+    f.querySelectorAll('tbody tr').forEach(function(tr){
+      var mud = false; tr.querySelectorAll('td.amb input').forEach(function(b){ if(b.checked !== ini.get(b)) mud = true; });
+      tr.classList.toggle('mudou', mud);
+    });
+    if(info) info.textContent = n ? (n + ' alteração(ões) não salva(s)') : 'Nenhuma alteração';
+  }
+  boxes.forEach(function(b){ b.addEventListener('change', conta); });
+  f.querySelectorAll('.todos-col').forEach(function(t){
+    t.addEventListener('change', function(){
+      f.querySelectorAll('td.amb input[data-col="' + t.dataset.col + '"]').forEach(function(b){ b.checked = t.checked; });
+      conta();
+    });
+  });
+  window.addEventListener('beforeunload', function(ev){
+    var pend = false; boxes.forEach(function(b){ if(b.checked !== ini.get(b)) pend = true; });
+    if(pend && !f.dataset.enviando){ ev.preventDefault(); ev.returnValue = ''; }
+  });
+  f.addEventListener('submit', function(){ f.dataset.enviando = '1'; });
+})();
+</script>
+{% endblock %}

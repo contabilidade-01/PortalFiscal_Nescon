@@ -14,8 +14,7 @@ from werkzeug.security import generate_password_hash
 # Rotinas que o admin pode liberar para operadores (admin tem todas sempre).
 PERMISSOES = [
     ('exec_nfe_entradas', 'Puxar NF-e entradas (compras)'),
-    ('exec_nfe_saidas', 'Puxar NF-e saídas (vendas)'),
-    ('exec_nfse', 'Puxar NFS-e'),
+    ('exec_nfse', 'Puxar NFS-e (emitidas e tomados)'),
     ('exec_nfce', 'Puxar NFC-e'),
     ('exec_ciencia', 'Rodar Ciência 210210'),
     ('exec_completo', 'Busca completa (todas as rotinas)'),
@@ -27,12 +26,56 @@ PERMISSOES = [
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 TIPO_PARA_PERM = {
     'nfe_entradas': 'exec_nfe_entradas',
-    'nfe_saidas': 'exec_nfe_saidas',
     'nfse': 'exec_nfse',
     'nfce': 'exec_nfce',
     'ciencia': 'exec_ciencia',
     'completo': 'exec_completo',
 }
+# NF-e Saidas pelo certificado do escritorio (autXML) foi DESLIGADA: redundante (as
+# vendas de cada cliente ja chegam pela entrada dele como 04_saida) e colidia com a
+# distNSU do CNPJ do escritorio (656 diario). Religar so por env, sem tela.
+SAIDAS_ESCRITORIO_ATIVO = os.environ.get('FISCAL_SAIDAS_ESCRITORIO', '0') == '1'
+
+# ---------- Ambientes de captura (cada um vira uma pagina) ----------
+# 'col' e a marcacao por empresa. NFS-e emitidas e tomados usam a MESMA consulta ao
+# ADN (uma fila de NSU por CNPJ): o sistema salva as duas e cada pagina filtra pela
+# marcacao. 'subs' = subpastas de XML daquele ambiente (XML/<cnpj>/<AAAA-MM>/<doc>/<sub>).
+AMBIENTES = [
+    {'chave': 'nfe_entradas', 'col': 'puxa_nfe', 'rotulo': 'NF-e Entradas', 'doc': 'NFe',
+     'subs': ('01_entrada',), 'extras': (('04_saida', 'Vendas próprias'), ('02_resumo', 'Resumos'),
+                                        ('03_eventos', 'Eventos')),
+     'motor': 'nfe', 'tipo_job': 'nfe_entradas', 'tipo_exec': 'nfe_entrada', 'perm': 'exec_nfe_entradas',
+     'cor': '#0ea5e9',
+     'desc': 'Compras que a empresa recebeu (distribuição DF-e da SEFAZ, por NSU). A mesma consulta traz '
+             'as notas que a própria empresa emitiu (vendas próprias) e dispara a Ciência 210210.'},
+    {'chave': 'nfse_emitidas', 'col': 'puxa_nfse_prestado', 'rotulo': 'NFS-e Emitidas', 'doc': 'NFSe',
+     'subs': ('02_prestado',), 'extras': (),
+     'motor': 'nfse', 'tipo_job': 'nfse', 'tipo_exec': 'nfse', 'perm': 'exec_nfse', 'cor': '#8b5cf6',
+     'desc': 'Serviços que a empresa prestou (notas emitidas) — Portal Nacional / ADN, por NSU. '
+             'Só municípios que compartilham com o ambiente nacional.'},
+    {'chave': 'nfse_tomados', 'col': 'puxa_nfse_tomado', 'rotulo': 'NFS-e Tomados', 'doc': 'NFSe',
+     'subs': ('01_tomado',), 'extras': (),
+     'motor': 'nfse', 'tipo_job': 'nfse', 'tipo_exec': 'nfse', 'perm': 'exec_nfse', 'cor': '#a855f7',
+     'desc': 'Serviços que a empresa contratou (notas recebidas como tomadora) — Portal Nacional / ADN, '
+             'por NSU. Mesma consulta das emitidas.'},
+    {'chave': 'nfce', 'col': 'puxa_nfce', 'rotulo': 'NFC-e', 'doc': 'NFCe',
+     'subs': ('01_venda',), 'extras': (),
+     'motor': 'nfce', 'tipo_job': 'nfce', 'tipo_exec': 'nfce', 'perm': 'exec_nfce', 'cor': '#15803d',
+     'desc': 'Vendas de varejo/consumidor (modelo 65) — SEFAZ-SP, por período. Data inicial e limite em '
+             'Configurações.'},
+]
+AMBIENTE_POR_CHAVE = {a['chave']: a for a in AMBIENTES}
+# Condicao SQL de "empresa entra na varredura" por motor (NFS-e = emitidas OU tomados).
+COND_MOTOR = {
+    'puxa_nfe': 'puxa_nfe=1',
+    'puxa_nfse': '(puxa_nfse_prestado=1 OR puxa_nfse_tomado=1)',
+    'puxa_nfce': 'puxa_nfce=1',
+}
+
+def sync_puxa_nfse(c):
+    """puxa_nfse vira espelho legado (= emitidas OU tomados). Chamar apos gravar marcacoes."""
+    c.execute('UPDATE empresas SET puxa_nfse = CASE WHEN COALESCE(puxa_nfse_prestado,0)=1 '
+              'OR COALESCE(puxa_nfse_tomado,0)=1 THEN 1 ELSE 0 END')
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get('FISCAL_DATA_DIR', BASE)
@@ -53,6 +96,8 @@ def _add_col(c, tabela, coluna, ddl):
     cols = [r[1] for r in c.execute('PRAGMA table_info(%s)' % tabela).fetchall()]
     if coluna not in cols:
         c.execute('ALTER TABLE %s ADD COLUMN %s' % (tabela, ddl))
+        return True
+    return False
 
 def init_db():
     with con() as c:
@@ -172,6 +217,13 @@ def init_db():
         _add_col(c, 'empresas', 'puxa_nfce', 'puxa_nfce INTEGER DEFAULT 0')
         _add_col(c, 'empresas', 'total_nfce', 'total_nfce INTEGER DEFAULT 0')
         _add_col(c, 'empresas', 'ultima_exec_nfce', 'ultima_exec_nfce TEXT')
+        # Ambientes segregados: NFS-e emitidas x tomados (antes um so 'puxa_nfse').
+        # Migracao unica: quem puxava NFS-e passa a puxar os dois.
+        novo_p = _add_col(c, 'empresas', 'puxa_nfse_prestado', 'puxa_nfse_prestado INTEGER DEFAULT 1')
+        novo_t = _add_col(c, 'empresas', 'puxa_nfse_tomado', 'puxa_nfse_tomado INTEGER DEFAULT 1')
+        if novo_p or novo_t:
+            c.execute('UPDATE empresas SET puxa_nfse_prestado=COALESCE(puxa_nfse,0), '
+                      'puxa_nfse_tomado=COALESCE(puxa_nfse,0)')
         if not c.execute("SELECT 1 FROM parametros WHERE chave='nfce_data_inicial'").fetchone():
             c.execute("INSERT INTO parametros(chave,valor) VALUES('nfce_data_inicial',?)",
                       (datetime.now().strftime('%Y-%m-01'),))

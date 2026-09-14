@@ -221,9 +221,17 @@ def _upsert_empresas(src, dst, cert_dir):
     scols = _cols(src, 'empresas')
     dcols = _cols(dst, 'empresas')
     cols = [c for c in scols if c in dcols and c != 'id']
+    # Backup anterior aos ambientes segregados: so tinha 'puxa_nfse'. Sem isto as
+    # colunas novas cairiam no DEFAULT 1 e marcariam NFS-e em quem nao puxava.
+    legado_nfse = ('puxa_nfse' in scols and 'puxa_nfse_prestado' not in scols
+                   and 'puxa_nfse_prestado' in dcols)
+    if legado_nfse:
+        cols = cols + ['puxa_nfse_prestado', 'puxa_nfse_tomado']
     n = 0
     for row in src.execute('SELECT * FROM empresas'):
-        data = {c: row[c] for c in cols}
+        data = {c: row[c] for c in cols if c in scols}
+        if legado_nfse:
+            data['puxa_nfse_prestado'] = data['puxa_nfse_tomado'] = row['puxa_nfse'] or 0
         if 'arquivo' in data:
             data['arquivo'] = _remap_pfx(data.get('arquivo'), cert_dir)
         ex = dst.execute('SELECT id FROM empresas WHERE cnpj=?', (data['cnpj'],)).fetchone()
