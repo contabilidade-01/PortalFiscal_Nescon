@@ -185,7 +185,7 @@ def puxar_nfce(emp, limite=None):
         sess, tmp = sessao(emp['arquivo'], emp['senha'])
     except Exception as e:
         return 0, 'erro_cert:%s' % str(e)[:40]
-    total = 0; parada = 'fim'; n_chaves = 0; bloq = None
+    total = 0; parada = 'fim'; n_chaves = 0; bloq = None; motivo = ''
     try:
         chaves = listar_chaves(sess, dt_ini, dt_fim); n_chaves = len(chaves)
         ja = _baixados(cnpj)
@@ -206,7 +206,11 @@ def puxar_nfce(emp, limite=None):
         bloq = cooldown_ate(NFCE_COOLDOWN_MIN)
         guard.registrar_bloqueio(cnpj, 'nfce', parada, e.xmot, nome=emp['nome'])
     except Exception as e:
-        parada = 'erro:%s' % str(e)[:60]
+        # Rejeicao da SEFAZ vira 'cStat_NNN' (a tela rotula) e o xMotivo vai para o detalhe;
+        # antes caia tudo em 'Falhou' sem dizer por que (ex.: cStat 104 da janela de 100 dias).
+        m = re.search(r'cStat=(\d+)\s*(.*)', str(e))
+        parada = ('cStat_%s' % m.group(1)) if m else 'erro:%s' % str(e)[:60]
+        motivo = (m.group(2) if m else str(e))[:120]
     finally:
         for f in tmp:
             try: os.remove(f)
@@ -218,6 +222,7 @@ def puxar_nfce(emp, limite=None):
                   (total, datetime.now().strftime('%Y-%m-%d %H:%M'), emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
                   ('nfce', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'),
-                   total, parada, 'desde %s | chaves=%d | janela<=%dd' % (
-                       dt_ini.strftime('%Y-%m-%d'), n_chaves, max(1, (dt_fim - dt_ini).days))))
+                   total, parada, 'desde %s | chaves=%d | janela<=%dd%s' % (
+                       dt_ini.strftime('%Y-%m-%d'), n_chaves, max(1, (dt_fim - dt_ini).days),
+                       (' | ' + motivo) if motivo else '')))
     return total, parada

@@ -50,7 +50,7 @@
         <label class="chk"><input type="checkbox" name="puxa_nfe" {{ 'checked' if (e['puxa_nfe'] if e else 1) }}> NF-e Entradas</label>
         <label class="chk"><input type="checkbox" name="puxa_nfse_prestado" {{ 'checked' if (e['puxa_nfse_prestado'] if e else 1) }}> NFS-e Emitidas</label>
         <label class="chk"><input type="checkbox" name="puxa_nfse_tomado" {{ 'checked' if (e['puxa_nfse_tomado'] if e else 1) }}> NFS-e Tomados</label>
-        <label class="chk"><input type="checkbox" name="puxa_nfce" {{ 'checked' if (e['puxa_nfce'] if e else 0) }}> NFC-e (varejo SP)</label>
+        <label class="chk" title="Serviço exclusivo da SEFAZ-SP: empresa de outra UF não pode ser marcada"><input type="checkbox" name="puxa_nfce" {{ 'checked' if (e['puxa_nfce'] if e else 0) }}> NFC-e (varejo — só SP)</label>
       </div>
       <div class="chkrow">
         <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (e['ativo'] if e else 1) }}> Cliente ativo</label>

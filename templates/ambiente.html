@@ -29,7 +29,9 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   '109': ('SEFAZ paralisado','wr'), 'cooldown': ('Em espera','wr'),
   'circuito_aberto': ('Circuito aberto','er'), 'sem_certificado': ('Sem certificado','er'),
   'uf_nao_sp': ('Fora de SP','nt'), 'erro': ('Falhou','er'), 'resposta_invalida': ('Resposta inválida','er'),
-  'erro_rede': ('Erro de rede','er'), 'erro_cert': ('Erro no certificado','er'), 'reset': ('Rebaixar histórico','nt')
+  'erro_rede': ('Erro de rede','er'), 'erro_cert': ('Erro no certificado','er'), 'reset': ('Rebaixar histórico','nt'),
+  'cert_vencido': ('Certificado vencido','er'), 'http_403': ('Certificado recusado (403)','er'),
+  'cStat_104': ('Período fora dos 100 dias','er')
 } %}
 {# parada pode vir com detalhe ('erro_rede:...', 'http_503', 'cStat_215'): rotula pelo prefixo #}
 {% macro rot(parada) -%}
@@ -65,7 +67,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
 
   <div class="kpis" style="margin:18px 0 0">
     <div class="kpi"><div class="val">{{ k.marcadas }}</div><div class="lab">Empresas marcadas</div></div>
-    <div class="kpi"><div class="val">{{ k.com_cert }}</div><div class="lab">Com certificado (entram na busca)</div></div>
+    <div class="kpi"><div class="val">{{ k.com_cert }}</div><div class="lab">Entram na busca (cert. válido{{ ', SP' if amb.motor=='nfce' }})</div></div>
     <div class="kpi"><div class="val">{{ k.docs }}</div><div class="lab">XML em disco</div></div>
     <div class="kpi"><div class="val" style="color:{{ 'var(--warn)' if k.bloqueadas else 'inherit' }}">{{ k.bloqueadas }}</div><div class="lab">Em espera / circuito</div></div>
   </div>
@@ -79,10 +81,22 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
 
   {% if rodando %}<div class="status-strip"><span class="spin"></span> {{ rodando }}</div>{% endif %}
 
+  {% if k.lista_vencidos %}
+  <div class="warnbox" style="background:var(--errbg);border-color:color-mix(in srgb,var(--err) 35%,var(--line))">⛔ <b>{{ k.lista_vencidos|length }} empresa(s) com certificado VENCIDO — a SEFAZ recusa (HTTP 403 / erro de conexão) e o robô não consulta mais:</b>
+    {% for e in k.lista_vencidos %}{{ e['nome']|title }} ({{ e['validade'][8:10] }}/{{ e['validade'][5:7] }}/{{ e['validade'][:4] }}){{ ', ' if not loop.last }}{% endfor %}.
+    Renove o A1 e vincule o novo em <a href="{{ url_for('certificados') }}">Certificados</a>.
+  </div>
+  {% endif %}
+  {% if k.fora_sp %}
+  <div class="warnbox">⚠️ <b>{{ k.fora_sp|length }} empresa(s) marcada(s) em NFC-e fora de SP — o serviço da SEFAZ-SP só atende SP e elas são puladas:</b>
+    {% for e in k.fora_sp %}{{ e['nome']|title }} ({{ e['uf'] }}){{ ', ' if not loop.last }}{% endfor %}.
+    {% if papel_atual=='admin' %}Desmarque em <a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>.{% endif %}
+  </div>
+  {% endif %}
   {% if puladas %}
-  <div class="warnbox">⚠️ <b>{{ puladas|length }} empresa(s) marcada(s) sem certificado válido — são puladas na busca:</b>
+  <div class="warnbox">⚠️ <b>{{ puladas|length }} empresa(s) marcada(s) sem certificado — são puladas na busca:</b>
     {% for e in puladas[:12] %}{{ e['nome']|title }}{{ ', ' if not loop.last }}{% endfor %}{% if puladas|length > 12 %} e mais {{ puladas|length - 12 }}{% endif %}.
-    Vincule em <a href="{{ url_for('certificados') }}">Certificados</a>.
+    Vincule em <a href="{{ url_for('certificados') }}">Certificados</a>{% if papel_atual=='admin' %} ou desmarque em <a href="{{ url_for('parametros_captura', filtro='sem_cert') }}">Parâmetros</a>{% endif %}.
   </div>
   {% endif %}
   {% if amb.motor == 'nfse' %}
@@ -98,10 +112,13 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   <div class="tbl-wrap"><table style="min-width:940px">
     <thead><tr><th>Empresa</th><th>Certificado</th><th>XML</th><th>Última busca</th><th>{{ 'Posição (NSU)' if amb.motor != 'nfce' else 'Última execução' }}</th><th>Situação</th><th></th></tr></thead>
     <tbody>
-    {% for x in linhas %}{% set e = x.e %}
+    {% for x in linhas %}{% set e = x.e %}{% set ce = cert_estado(e) %}
     <tr>
-      <td><div class="empresa-nome">{{ e['nome']|title }}</div><div class="mono">{{ e['cnpj'] }}</div></td>
-      <td>{% if e['senha_ok'] %}<span class="st ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="st er">falta</span>{% endif %}</td>
+      <td><div class="empresa-nome">{{ e['nome']|title }}</div><div class="mono">{{ e['cnpj'] }}{% if e['uf'] %} · {{ e['uf'] }}{% endif %}</div></td>
+      <td>{% if ce[0] == 'falta' %}<span class="st er">falta</span>
+          {% elif ce[0] == 'vencido' %}<span class="st er" title="venceu em {{ e['validade'] }}">vencido</span>
+          {% elif ce[0] == 'vencendo' %}<span class="st wr" title="válido até {{ e['validade'] }}">vence em {{ ce[1] }}d</span>
+          {% else %}<span class="st ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% endif %}</td>
       <td class="num">{{ x.docs }}</td>
       <td>{% if x.ult %}
         <div class="muted">{{ x.ult['quando'] }} · {{ x.ult['docs'] }} doc(s)</div>
@@ -111,7 +128,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
       <td>{% if x.sit == 'circuito' %}<span class="st er">circuito aberto</span>
           {% elif x.sit == 'cooldown' %}<span class="st wr" title="libera em {{ x.ate }}">espera até {{ x.ate[11:16] }}</span>
           {% else %}<span class="st ok">livre</span>{% endif %}</td>
-      <td>{% if tem_perm(amb.perm) and e['senha_ok'] %}
+      <td>{% if tem_perm(amb.perm) and ce[0] in ('ok', 'vencendo') %}
         <form method="post" action="{{ url_for('ambiente_puxar', chave=amb.chave) }}" style="margin:0">
           <input type="hidden" name="cnpj" value="{{ e['cnpj'] }}">
           <button class="btn btn-ghost sm" {{ 'disabled title="aguarde a espera/rearme"' if x.sit != 'livre' }}>Puxar esta</button>

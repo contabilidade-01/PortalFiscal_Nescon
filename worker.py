@@ -11,7 +11,7 @@
 import os, threading, time
 from datetime import datetime, timedelta
 import models
-from engines import nfe, nfse, ciencia, nfce_sp
+from engines import nfe, nfse, ciencia, nfce_sp, alertas
 from engines.pausa import (
     NFE_ENTRE_EMPRESAS, NFCE_ENTRE_EMPRESAS, RETOMAR,
     delay_retomada,
@@ -124,6 +124,27 @@ def _campo_emp(cnpj, col):
         r = c.execute('SELECT %s FROM empresas WHERE cnpj=?' % col, (cnpj,)).fetchone()
         return r[0] if r else None
 
+_TIPO_EXEC = {'nfe': 'nfe_entrada', 'nfse': 'nfse', 'nfce': 'nfce'}
+
+def cert_vencido(e, hoje=None):
+    """True se a validade gravada do A1 ja passou (a SEFAZ recusa: HTTP 403 / falha de TLS)."""
+    v = (e['validade'] or '')[:10] if 'validade' in e.keys() else ''
+    return bool(v) and v < (hoje or datetime.now().strftime('%Y-%m-%d'))
+
+def _motivo_pular(e, motor):
+    """Motivo para NAO consultar a empresa (e registrar no historico), ou None."""
+    if cert_vencido(e):
+        return 'cert_vencido', 'certificado venceu em %s — renove e vincule o novo A1' % e['validade']
+    if motor == 'nfce' and (e['uf'] or '').upper() not in ('', 'SP'):
+        return 'uf_nao_sp', 'NFC-e só existe para empresas de SP (UF=%s) — desmarque em Parâmetros' % e['uf']
+    return None
+
+def _registrar_pulo(e, motor, parada, detalhe):
+    with models.con() as c:
+        c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
+                  (_TIPO_EXEC.get(motor, motor), e['cnpj'], e['nome'],
+                   datetime.now().strftime('%Y-%m-%d %H:%M'), 0, parada, detalhe))
+
 def _agendar_se_precisa(tipo_job, cnpj, parada, motor='nfe'):
     if parada not in RETOMAR:
         return
@@ -142,13 +163,22 @@ def _executar(job):
         emps = _empresas(escopo, col)
         _upd(jid, total=len(emps), feitos=0, mensagem=nome_etapa)
         feitos = 0
+        resultados = []  # (cnpj, nome, parada) das realmente consultadas -> alerta de falha geral
         for e in emps:
             _upd(jid, atual='%s - %s' % (nome_etapa, (e['nome'] or '')[:32]))
+            pulo = _motivo_pular(e, motor)
+            if pulo:
+                # nao gasta consulta na SEFAZ/ADN; fica visivel na pagina do ambiente
+                _registrar_pulo(e, motor, *pulo)
+                feitos += 1
+                _upd(jid, feitos=feitos, docs=docs)
+                continue
             parada = 'ok'
             try:
                 d, parada = fn(e); docs += d
             except Exception:
                 parada = 'erro'
+            resultados.append((e['cnpj'], e['nome'], parada))
             _agendar_se_precisa(tipo_job, e['cnpj'], parada, motor=motor)
             if com_ciencia:
                 try:
@@ -163,6 +193,12 @@ def _executar(job):
             _upd(jid, feitos=feitos, docs=docs)
             if espera_seg:
                 time.sleep(espera_seg)
+        # Rodada falhou na maioria das empresas (ex.: NFC-e inteira com cStat 104)? Avisa hoje,
+        # nao quando alguem abrir a tela dias depois. Nunca derruba o job.
+        try:
+            alertas.avaliar_falha_geral(motor, resultados)
+        except Exception:
+            pass
     if tipo in ('nfe_entradas', 'completo'):
         # Ciencia apos cada entrada: libera o XML completo na proxima distNSU.
         etapa_empresas('Entradas NF-e', 'puxa_nfe', nfe.puxar_entradas, 'nfe_entradas', 'nfe',
@@ -198,6 +234,12 @@ def _executar(job):
     if tipo in ('nfce', 'completo'):
         etapa_empresas('NFC-e (SP)', 'puxa_nfce', nfce_sp.puxar_nfce, 'nfce', 'nfce',
                        espera_seg=NFCE_ENTRE_EMPRESAS)
+    if tipo == 'completo':
+        # 1x por rodada completa (robo diario): certificados a 30/15/7 dias, no dia e vencidos.
+        try:
+            alertas.verificar_certificados()
+        except Exception:
+            pass
     return docs
 
 def _claim_proximo():

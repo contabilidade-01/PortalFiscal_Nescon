@@ -72,6 +72,13 @@ COND_MOTOR = {
     'puxa_nfce': 'puxa_nfce=1',
 }
 
+NFCE_SO_SP_SQL = ("UPDATE empresas SET puxa_nfce=0 WHERE COALESCE(puxa_nfce,0)=1 "
+                  "AND UPPER(COALESCE(uf,'')) NOT IN ('', 'SP')")
+
+def nfce_permitida(uf):
+    """NFC-e so e consultavel para SP (UF vazia: deixa marcar; o puxador valida)."""
+    return (uf or '').strip().upper() in ('', 'SP')
+
 def sync_puxa_nfse(c):
     """puxa_nfse vira espelho legado (= emitidas OU tomados). Chamar apos gravar marcacoes."""
     c.execute('UPDATE empresas SET puxa_nfse = CASE WHEN COALESCE(puxa_nfse_prestado,0)=1 '
@@ -207,6 +214,10 @@ def init_db():
         -- Cadencia NFC-e (e outros) compartilhada entre processos
         CREATE TABLE IF NOT EXISTS rate_gate(
           servico TEXT PRIMARY KEY, proximo_permitido_em TEXT);
+
+        -- Alertas proativos (WhatsApp) ja enviados: dedup por chave (ex.: cert:<cnpj>:<validade>:7)
+        CREATE TABLE IF NOT EXISTS alertas_enviados(
+          chave TEXT PRIMARY KEY, quando TEXT, texto TEXT);
         ''')
         # migracoes de colunas novas em bancos antigos
         _add_col(c, 'usuarios', 'todas_empresas', 'todas_empresas INTEGER DEFAULT 0')
@@ -224,6 +235,10 @@ def init_db():
         if novo_p or novo_t:
             c.execute('UPDATE empresas SET puxa_nfse_prestado=COALESCE(puxa_nfse,0), '
                       'puxa_nfse_tomado=COALESCE(puxa_nfse,0)')
+        # Invariante: NFC-e (SAE da SEFAZ-SP) so existe para empresa de SP. Limpa marcacao
+        # invalida a cada boot (UF vazia fica, pois o puxador aceita e decide).
+        if 'uf' in [r[1] for r in c.execute('PRAGMA table_info(empresas)').fetchall()]:
+            c.execute(NFCE_SO_SP_SQL)
         if not c.execute("SELECT 1 FROM parametros WHERE chave='nfce_data_inicial'").fetchone():
             c.execute("INSERT INTO parametros(chave,valor) VALUES('nfce_data_inicial',?)",
                       (datetime.now().strftime('%Y-%m-01'),))

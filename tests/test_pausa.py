@@ -2,7 +2,8 @@
 import os, sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datetime import datetime, timedelta
-from engines.pausa import nsu15, janela_nfce, delay_retomada, em_cooldown, RETOMAR, RETOMAR_BUFFER_SEG
+from engines.pausa import (nsu15, janela_nfce, delay_retomada, em_cooldown, RETOMAR, RETOMAR_BUFFER_SEG,
+                           NFCE_MARGEM_DIAS)
 
 def test_nsu15():
     assert nsu15(None) == '000000000000000'
@@ -16,7 +17,8 @@ def test_janela_nfce_corta_100_dias():
     ini = datetime(2025, 1, 1)
     a, b = janela_nfce(ini, fim, max_dias=100)
     assert b == fim
-    assert a == fim - timedelta(days=100)
+    # folga: exatamente 100 dias a SEFAZ-SP rejeita (cStat 104)
+    assert a == fim - timedelta(days=100 - NFCE_MARGEM_DIAS)
 
 def test_janela_nfce_dentro_do_teto():
     fim = datetime(2026, 8, 25, 12, 0, 0)

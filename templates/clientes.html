@@ -32,7 +32,8 @@
     <tr>
       <td class="empresa-nome" style="max-width:220px">{{ e['nome']|title }}</td>
       <td class="mono">{{ e['cnpj'] }}</td>
-      <td>{% if e['senha_ok'] %}<span class="certbadge ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="certbadge no">falta</span>{% endif %}</td>
+      {% set ce = cert_estado(e) %}
+      <td>{% if ce[0] == 'falta' %}<span class="certbadge no">falta</span>{% elif ce[0] == 'vencido' %}<span class="certbadge no" title="venceu em {{ e['validade'] }}">vencido</span>{% else %}<span class="certbadge ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% endif %}</td>
       <td><div class="rowform" style="gap:5px">
         {% if e['puxa_nfe'] %}<span class="tag ent">NF-e Ent.</span>{% endif %}
         {% if e['puxa_nfse_prestado'] %}<span class="tag sai">NFS-e Emit.</span>{% endif %}

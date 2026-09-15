@@ -37,7 +37,7 @@ tr.mudou{background:color-mix(in srgb,var(--brand1) 7%,transparent)}
     <form method="get">
       <input name="q" value="{{ q }}" placeholder="nome ou CNPJ" style="width:200px">
       <select name="filtro">
-        {% for v,l in [('','Todas as empresas'),('ativas','Só ativas'),('nenhum','Ativas sem nenhum ambiente'),('com_cert','Com certificado'),('sem_cert','Sem certificado')] %}
+        {% for v,l in [('','Todas as empresas'),('ativas','Só ativas'),('nenhum','Ativas sem nenhum ambiente'),('com_cert','Com certificado válido'),('sem_cert','Sem certificado ou vencido'),('vencido','Certificado vencido')] %}
         <option value="{{ v }}" {{ 'selected' if filtro==v }}>{{ l }}</option>{% endfor %}
       </select>
       <button class="btn btn-ghost sm">Filtrar</button>
@@ -61,10 +61,14 @@ tr.mudou{background:color-mix(in srgb,var(--brand1) 7%,transparent)}
         <td><input type="hidden" name="ids" value="{{ e['id'] }}">
           <div class="empresa-nome">{{ e['nome']|title }}{% if not e['ativo'] %} <span class="tag">inativa</span>{% endif %}</div>
           <div class="mono">{{ e['cnpj'] }}{% if e['uf'] %} · {{ e['uf'] }}{% endif %}</div></td>
-        <td>{% if e['senha_ok'] %}<span class="certb ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% else %}<span class="certb no">falta</span>{% endif %}</td>
+        {% set ce = cert_estado(e) %}
+        <td>{% if ce[0] == 'falta' %}<span class="certb no">falta</span>
+            {% elif ce[0] == 'vencido' %}<span class="certb no" title="venceu em {{ e['validade'] }}">vencido</span>
+            {% else %}<span class="certb ok" title="válido até {{ e['validade'] }}">A1 ✓{{ ' · ' ~ ce[1] ~ 'd' if ce[0]=='vencendo' }}</span>{% endif %}</td>
         {% for a in ambientes %}
-        <td class="amb"><input type="checkbox" name="{{ a.col }}_{{ e['id'] }}" data-col="{{ a.col }}" {{ 'checked' if e[a.col] }}
-          {% if a.chave=='nfce' and e['uf'] and e['uf']|upper != 'SP' %}title="NFC-e só funciona para empresas de SP"{% endif %}></td>
+        {% set bloq = a.chave=='nfce' and e['uf'] and e['uf']|upper != 'SP' %}
+        <td class="amb"><input type="checkbox" name="{{ a.col }}_{{ e['id'] }}" data-col="{{ a.col }}" {{ 'checked' if (e[a.col] and not bloq) }}
+          {% if bloq %}disabled title="NFC-e só existe para empresas de SP (esta é de {{ e['uf'] }})"{% endif %}></td>
         {% endfor %}
       </tr>
       {% else %}
@@ -101,7 +105,7 @@ tr.mudou{background:color-mix(in srgb,var(--brand1) 7%,transparent)}
   boxes.forEach(function(b){ b.addEventListener('change', conta); });
   f.querySelectorAll('.todos-col').forEach(function(t){
     t.addEventListener('change', function(){
-      f.querySelectorAll('td.amb input[data-col="' + t.dataset.col + '"]').forEach(function(b){ b.checked = t.checked; });
+      f.querySelectorAll('td.amb input[data-col="' + t.dataset.col + '"]:not(:disabled)').forEach(function(b){ b.checked = t.checked; });
       conta();
     });
   });

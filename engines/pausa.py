@@ -27,6 +27,9 @@ NFCE_LISTAGEM = float(NFCE.get('espera_listagem_seg', 1.0))
 NFCE_ENTRE_EMPRESAS = float(NFCE.get('espera_entre_empresas_seg', 3))
 NFCE_COOLDOWN_MIN = int(NFCE.get('cooldown_min', 65))
 NFCE_MAX_DIAS = int(NFCE.get('max_dias', 100))
+# A SEFAZ-SP recusa dataHoraInicial NO limite (cStat 104 "anterior a 100 dias"), testado
+# em 15/09/2026: 100d -> 104, 99d -> ok. Folga de 2 dias contra relogio/fuso do servidor.
+NFCE_MARGEM_DIAS = int(NFCE.get('margem_dias', 2))
 NFCE_RETOMAR_LIMITE_SEG = int(NFCE.get('retomar_limite_seg', 90))
 
 CIENCIA_ESPERA = float(CIENCIA.get('espera_seg', 2))
@@ -84,10 +87,11 @@ def segundos_ate(ate):
 
 
 def janela_nfce(dt_ini, dt_fim=None, max_dias=None):
-    """Corta o periodo da listagem SAE no teto de 100 dias da SEFAZ-SP."""
-    dias = NFCE_MAX_DIAS if max_dias is None else int(max_dias)
+    """Corta o periodo da listagem SAE no teto de 100 dias da SEFAZ-SP, com folga
+    (NFCE_MARGEM_DIAS): cortar exatamente em 100 dias faz a SEFAZ rejeitar (cStat 104)."""
+    dias = (NFCE_MAX_DIAS if max_dias is None else int(max_dias)) - NFCE_MARGEM_DIAS
     fim = dt_fim or datetime.now()
-    chao = fim - timedelta(days=dias)
+    chao = fim - timedelta(days=max(1, dias))
     if dt_ini < chao:
         dt_ini = chao
     if dt_ini > fim:

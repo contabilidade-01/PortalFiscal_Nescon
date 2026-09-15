@@ -54,7 +54,7 @@
     <div class="nums">
       <div class="n"><b>{{ k.marcadas }}</b><span>marcadas</span></div>
       <div class="n {{ 'alerta' if k.bloqueadas else '' }}"><b>{{ k.bloqueadas }}</b><span>em espera</span></div>
-      <div class="n {{ 'ruim' if k.sem_cert else '' }}"><b>{{ k.sem_cert }}</b><span>sem cert.</span></div>
+      <div class="n {{ 'ruim' if (k.sem_cert + k.vencidos) else '' }}" title="{{ k.sem_cert }} sem certificado · {{ k.vencidos }} vencido(s)"><b>{{ k.sem_cert + k.vencidos }}</b><span>cert. inválido</span></div>
     </div>
     {% if cd.rodando %}<div class="run"><span class="spin"></span> {{ cd.rodando }}</div>
     {% else %}<div class="ult">{% if k.ultima %}Última: {{ k.ultima['quando'] }} · {{ k.ultima['nome']|title }} · {{ k.ultima['docs'] }} doc(s){% else %}Sem execuções ainda.{% endif %}</div>{% endif %}

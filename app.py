@@ -117,7 +117,19 @@ def _inject_papel():
         'tem_perm': lambda k: k in perms,
         'risco_volume': (models.diagnostico_persistencia().get('risco_apagar_no_deploy')
                          if session.get('papel') == 'admin' else False),
+        'cert_estado': cert_estado,
     }
+
+def cert_estado(e):
+    """('ok'|'vencendo'|'vencido'|'falta', dias). 'senha_ok' so diz que o .pfx abriu —
+    um A1 vencido abre, mas a SEFAZ recusa (HTTP 403 na NF-e / falha de TLS no ADN)."""
+    if not e['senha_ok']:
+        return 'falta', None
+    try:
+        dias = (datetime.strptime((e['validade'] or '')[:10], '%Y-%m-%d').date() - datetime.now().date()).days
+    except ValueError:
+        return 'ok', None
+    return ('vencido' if dias < 0 else 'vencendo' if dias <= 30 else 'ok'), dias
 
 # Rate limit simples (memoria) p/ forgot-password — alinhado ao nescon-clientes
 _forgot_hits = defaultdict(list)
@@ -345,8 +357,8 @@ def _resumo_ambiente(amb, emp, com_linhas=False):
                WHERE tipo=? GROUP BY cnpj) u ON u.mid=x.id''', (amb['tipo_exec'],)).fetchall()}
         ultima = c.execute('SELECT * FROM execucoes WHERE tipo=? ORDER BY id DESC LIMIT 1',
                            (amb['tipo_exec'],)).fetchone()
-    k = {'marcadas': len(marcadas), 'com_cert': 0, 'sem_cert': 0, 'docs': 0, 'bloqueadas': 0,
-         'ultima': ultima, 'extras': {}}
+    k = {'marcadas': len(marcadas), 'com_cert': 0, 'sem_cert': 0, 'vencidos': 0, 'docs': 0,
+         'bloqueadas': 0, 'ultima': ultima, 'extras': {}, 'lista_vencidos': [], 'fora_sp': []}
     linhas, puladas = [], []
     for e in marcadas:
         sit, ate = _situacao(e, motor, agora_s)
@@ -354,11 +366,18 @@ def _resumo_ambiente(amb, emp, com_linhas=False):
         k['docs'] += docs
         if sit != 'livre':
             k['bloqueadas'] += 1
-        if e['senha_ok']:
-            k['com_cert'] += 1
-        else:
+        est, _dias = cert_estado(e)
+        fora_sp = motor == 'nfce' and (e['uf'] or '').upper() not in ('', 'SP')
+        if est == 'falta':
             k['sem_cert'] += 1
             puladas.append(e)
+        elif est == 'vencido':
+            k['vencidos'] += 1
+            k['lista_vencidos'].append(e)
+        elif fora_sp:
+            k['fora_sp'].append(e)
+        else:
+            k['com_cert'] += 1
         if com_linhas:
             _, _, col_pos = _MOTOR_COLS[motor]
             linhas.append({'e': e, 'docs': docs, 'sit': sit, 'ate': ate, 'ult': ult.get(e['cnpj']),
@@ -366,7 +385,8 @@ def _resumo_ambiente(amb, emp, com_linhas=False):
         for sub, _rot in amb['extras']:
             k['extras'][sub] = k['extras'].get(sub, 0) + _xml_por_empresa(e['cnpj'], amb['doc'], (sub,))
     if com_linhas:
-        linhas.sort(key=lambda x: (0 if x['e']['senha_ok'] else 1, (x['e']['nome'] or '').lower()))
+        ordem = {'ok': 0, 'vencendo': 0, 'vencido': 1, 'falta': 2}
+        linhas.sort(key=lambda x: (ordem[cert_estado(x['e'])[0]], (x['e']['nome'] or '').lower()))
     return k, linhas, puladas
 
 def _job_do_ambiente(amb):
@@ -388,7 +408,7 @@ def dashboard():
         k, _l, _p = _resumo_ambiente(amb, emp)
         cards.append({'a': amb, 'k': k, 'rodando': _job_do_ambiente(amb)})
     kpi = dict(total=len(emp), ativas=sum(1 for e in emp if e['ativo']),
-               com_cert=sum(1 for e in emp if e['senha_ok']),
+               com_cert=sum(1 for e in emp if cert_estado(e)[0] in ('ok', 'vencendo')),
                sem_ambiente=sum(1 for e in emp if e['ativo'] and not any(
                    (e[a['col']] or 0) for a in models.AMBIENTES)),
                docs=sum(cd['k']['docs'] for cd in cards))
@@ -455,13 +475,22 @@ def parametros_captura():
     """Tela unica de marcacao: empresas x ambientes de captura."""
     if request.method == 'POST':
         ids = [int(i) for i in request.form.getlist('ids') if i.isdigit()]
+        recusadas = []
         with models.con() as c:
+            ufs = {r['id']: r for r in c.execute('SELECT id, nome, uf FROM empresas').fetchall()}
             for eid in ids:
-                vals = [1 if request.form.get('%s_%d' % (a['col'], eid)) else 0 for a in models.AMBIENTES]
-                c.execute('UPDATE empresas SET %s WHERE id=?' % ','.join(
-                    '%s=?' % a['col'] for a in models.AMBIENTES), vals + [eid])
+                vals = {a['col']: (1 if request.form.get('%s_%d' % (a['col'], eid)) else 0) for a in models.AMBIENTES}
+                emp = ufs.get(eid)
+                if vals['puxa_nfce'] and emp and not models.nfce_permitida(emp['uf']):
+                    vals['puxa_nfce'] = 0
+                    recusadas.append('%s (%s)' % ((emp['nome'] or '').title(), emp['uf']))
+                c.execute('UPDATE empresas SET %s WHERE id=?' % ','.join('%s=?' % k for k in vals),
+                          list(vals.values()) + [eid])
             models.sync_puxa_nfse(c)
         flash('Parâmetros de captura salvos (%d empresa(s)).' % len(ids), 'ok')
+        if recusadas:
+            flash('NFC-e não marcada para empresa fora de SP (o serviço é só da SEFAZ-SP): %s.'
+                  % ', '.join(recusadas), 'erro')
         return redirect(url_for('parametros_captura', q=request.form.get('q', ''),
                                 filtro=request.form.get('filtro', '')))
     q = (request.args.get('q') or '').strip().lower()
@@ -473,8 +502,10 @@ def parametros_captura():
         if q and q not in (e['nome'] or '').lower() and q not in (e['cnpj'] or ''):
             return False
         nenhum = not any((e[a['col']] or 0) for a in models.AMBIENTES)
+        est = cert_estado(e)[0]
         return {'': True, 'ativas': bool(e['ativo']), 'nenhum': bool(e['ativo']) and nenhum,
-                'sem_cert': not e['senha_ok'], 'com_cert': bool(e['senha_ok'])}.get(filtro, True)
+                'sem_cert': est in ('falta', 'vencido'), 'com_cert': est in ('ok', 'vencendo'),
+                'vencido': est == 'vencido'}.get(filtro, True)
     lista = [e for e in emp if _ok(e)]
     return render_template('parametros_captura.html', empresas=lista, ambientes=models.AMBIENTES,
                            tot=tot, q=request.args.get('q', ''), filtro=filtro, total=len(emp))
@@ -546,9 +577,14 @@ def _anexo(s):
     s = (s or 'I').upper().strip()
     return s if s in ('I', 'II', 'III', 'IV', 'V') else 'I'
 
-def _flags_ambientes(f):
-    """{coluna: 0/1} dos ambientes a partir do formulario (checkbox name = coluna)."""
-    return {a['col']: (1 if f.get(a['col']) else 0) for a in models.AMBIENTES}
+def _flags_ambientes(f, uf=None):
+    """{coluna: 0/1} dos ambientes a partir do formulario (checkbox name = coluna).
+    NFC-e fora de SP e recusada (avisa com flash)."""
+    fl = {a['col']: (1 if f.get(a['col']) else 0) for a in models.AMBIENTES}
+    if fl['puxa_nfce'] and not models.nfce_permitida(uf):
+        fl['puxa_nfce'] = 0
+        flash('NFC-e não marcada: o serviço é só da SEFAZ-SP e a empresa é de %s.' % uf, 'erro')
+    return fl
 
 @app.route('/clientes/novo', methods=['GET', 'POST'])
 @admin_required
@@ -562,7 +598,7 @@ def cliente_novo():
         with models.con() as c:
             if c.execute('SELECT 1 FROM empresas WHERE cnpj=?', (cnpj,)).fetchone():
                 flash('Já existe cliente com esse CNPJ.', 'erro'); return redirect(url_for('clientes'))
-            fl = _flags_ambientes(f)
+            fl = _flags_ambientes(f, uf)
             c.execute('''INSERT INTO empresas(cnpj,nome,uf,cuf,whatsapp,responsavel,email,emissor,marketplace,
                          metodo_saida,puxa_nfe,puxa_nfse_prestado,puxa_nfse_tomado,puxa_nfce,ativo,obs,
                          simples_anexo,simples_rbt12,origem,criado)
@@ -588,7 +624,7 @@ def cliente_editar(eid):
     if request.method == 'POST':
         f = request.form
         uf, cuf = _uf_cuf(f.get('uf'))
-        fl = _flags_ambientes(f)
+        fl = _flags_ambientes(f, uf)
         with models.con() as c:
             c.execute('''UPDATE empresas SET nome=?,uf=?,cuf=?,whatsapp=?,responsavel=?,email=?,emissor=?,
                          marketplace=?,metodo_saida=?,puxa_nfe=?,puxa_nfse_prestado=?,puxa_nfse_tomado=?,
@@ -932,6 +968,7 @@ def cert_upload():
                       'VALUES(?,?,?,?,?,?,1,?,1,?)', (cnpj, nome, uf, certs.UF_COD.get(uf, '35'),
                        dest, senha, val, datetime.now().isoformat(timespec='seconds')))
             flash('Empresa criada pelo certificado: %s.' % nome, 'ok')
+        c.execute(models.NFCE_SO_SP_SQL)  # UF veio do certificado: NFC-e so SP
     return redirect(url_for('certificados'))
 
 @app.route('/cert/scan', methods=['POST'])
@@ -956,6 +993,7 @@ def cert_scan():
                 if ex:
                     c.execute('UPDATE empresas SET arquivo=?,senha=?,senha_ok=1,validade=?,uf=?,cuf=? WHERE id=?',
                               (os.path.join(raiz, a), senha, val, uf, certs.UF_COD.get(uf, '35'), ex['id'])); n += 1
+        c.execute(models.NFCE_SO_SP_SQL)  # UF veio do certificado: NFC-e so SP
     flash('Vinculados %d certificados às empresas da base.' % n, 'ok')
     return redirect(url_for('certificados'))
 
