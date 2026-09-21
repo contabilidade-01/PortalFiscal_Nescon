@@ -14,6 +14,7 @@ from werkzeug.security import generate_password_hash
 # Rotinas que o admin pode liberar para operadores (admin tem todas sempre).
 PERMISSOES = [
     ('exec_nfe_entradas', 'Puxar NF-e entradas (compras)'),
+    ('exec_nfe_saidas', 'Puxar NF-e saídas (por chave)'),
     ('exec_nfse', 'Puxar NFS-e (emitidas e tomados)'),
     ('exec_nfce', 'Puxar NFC-e'),
     ('exec_ciencia', 'Rodar Ciência 210210'),
@@ -26,6 +27,7 @@ PERMISSOES = [
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 TIPO_PARA_PERM = {
     'nfe_entradas': 'exec_nfe_entradas',
+    'nfe_saidas_chave': 'exec_nfe_saidas',
     'nfse': 'exec_nfse',
     'nfce': 'exec_nfce',
     'ciencia': 'exec_ciencia',
@@ -48,6 +50,13 @@ AMBIENTES = [
      'cor': '#0ea5e9',
      'desc': 'Compras que a empresa recebeu (distribuição DF-e da SEFAZ, por NSU). A mesma consulta traz '
              'as notas que a própria empresa emitiu (vendas próprias) e dispara a Ciência 210210.'},
+    {'chave': 'nfe_saidas', 'col': 'puxa_nfe_saida', 'rotulo': 'NF-e Saídas', 'doc': 'NFe',
+     'subs': ('04_saida',), 'extras': (),
+     'motor': 'nfe', 'tipo_job': 'nfe_saidas_chave', 'tipo_exec': 'nfe_saida', 'perm': 'exec_nfe_saidas',
+     'cor': '#f59e0b', 'por_chave': True,
+     'desc': 'Vendas que a empresa emitiu. A SEFAZ não devolve ao emitente o que ele mesmo emitiu, '
+             'então baixamos por CHAVE (consChNFe) com o certificado do próprio cliente — funciona em '
+             'qualquer UF. As chaves vêm do relatório do emissor (CSV/colar) ou chegam sozinhas por autXML.'},
     {'chave': 'nfse_emitidas', 'col': 'puxa_nfse_prestado', 'rotulo': 'NFS-e Emitidas', 'doc': 'NFSe',
      'subs': ('02_prestado',), 'extras': (),
      'motor': 'nfse', 'tipo_job': 'nfse', 'tipo_exec': 'nfse', 'perm': 'exec_nfse', 'cor': '#8b5cf6',
@@ -78,6 +87,66 @@ NFCE_SO_SP_SQL = ("UPDATE empresas SET puxa_nfce=0 WHERE COALESCE(puxa_nfce,0)=1
 def nfce_permitida(uf):
     """NFC-e so e consultavel para SP (UF vazia: deixa marcar; o puxador valida)."""
     return (uf or '').strip().upper() in ('', 'SP')
+
+CHAVE_RE = __import__('re').compile(r'\b(\d{44})\b')
+
+def chave_valida(ch):
+    """44 digitos + DV modulo 11 (peso 2..9 da direita p/ esquerda)."""
+    ch = ''.join(d for d in str(ch or '') if d.isdigit())
+    if len(ch) != 44:
+        return False
+    soma, peso = 0, 2
+    for d in reversed(ch[:43]):
+        soma += int(d) * peso
+        peso = 2 if peso == 9 else peso + 1
+    resto = soma % 11
+    dv = 0 if resto in (0, 1) else 11 - resto
+    return dv == int(ch[43])
+
+def extrair_chaves(texto):
+    """Pega todas as chaves de 44 digitos de um texto colado / CSV, sem repetir."""
+    vistas, out = set(), []
+    for ch in CHAVE_RE.findall(''.join(ch if ch.isdigit() else ' ' for ch in (texto or ''))):
+        if ch not in vistas:
+            vistas.add(ch)
+            out.append(ch)
+    return out
+
+def adicionar_chaves(cnpj, chaves, origem='manual'):
+    """Enfileira chaves para download. Retorna (novas, repetidas, invalidas, de_outro_cnpj)."""
+    agora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    novas = rep = inval = outro = 0
+    with con() as c:
+        for ch in chaves:
+            if not chave_valida(ch):
+                inval += 1
+                continue
+            if ch[6:20] != cnpj:          # posicoes 7..20 da chave = CNPJ do emitente
+                outro += 1
+                continue
+            r = c.execute('INSERT OR IGNORE INTO chaves_saida(chave,cnpj,origem,status,criado,atualizado) '
+                          "VALUES(?,?,?,'pendente',?,?)", (ch, cnpj, origem, agora, agora))
+            novas += r.rowcount
+            rep += (1 - r.rowcount)
+    return novas, rep, inval, outro
+
+def chaves_pendentes(cnpj, limite=50):
+    with con() as c:
+        return [r['chave'] for r in c.execute(
+            "SELECT chave FROM chaves_saida WHERE cnpj=? AND status IN ('pendente','erro') "
+            'AND tentativas < 3 ORDER BY chave LIMIT ?', (cnpj, limite)).fetchall()]
+
+def marcar_chave(chave, status, detalhe=''):
+    with con() as c:
+        c.execute('UPDATE chaves_saida SET status=?, detalhe=?, tentativas=tentativas+1, atualizado=? '
+                  'WHERE chave=?', (status, (detalhe or '')[:200],
+                                    datetime.now().strftime('%Y-%m-%d %H:%M:%S'), chave))
+
+def resumo_chaves(cnpj):
+    with con() as c:
+        rows = c.execute('SELECT status, COUNT(*) n FROM chaves_saida WHERE cnpj=? GROUP BY status',
+                         (cnpj,)).fetchall()
+    return {r['status']: r['n'] for r in rows}
 
 def sync_puxa_nfse(c):
     """puxa_nfse vira espelho legado (= emitidas OU tomados). Chamar apos gravar marcacoes."""
@@ -218,6 +287,18 @@ def init_db():
         -- Alertas proativos (WhatsApp) ja enviados: dedup por chave (ex.: cert:<cnpj>:<validade>:7)
         CREATE TABLE IF NOT EXISTS alertas_enviados(
           chave TEXT PRIMARY KEY, quando TEXT, texto TEXT);
+
+        -- NF-e de SAIDA por chave: a SEFAZ nao distribui o que a empresa emitiu (NT 2014.002),
+        -- mas entrega o XML completo por consChNFe a quem e participante — e o EMITENTE e'.
+        -- Aqui fica a fila de chaves (do relatorio do emissor, colada na tela ou via autXML).
+        CREATE TABLE IF NOT EXISTS chaves_saida(
+          chave TEXT PRIMARY KEY,           -- 44 digitos
+          cnpj TEXT NOT NULL,               -- emitente (dono do certificado)
+          origem TEXT,                      -- manual | csv | derivada
+          status TEXT DEFAULT 'pendente',   -- pendente | baixada | nao_encontrada | erro
+          tentativas INTEGER DEFAULT 0,
+          criado TEXT, atualizado TEXT, detalhe TEXT);
+        CREATE INDEX IF NOT EXISTS idx_chaves_saida_cnpj ON chaves_saida(cnpj, status);
         ''')
         # migracoes de colunas novas em bancos antigos
         _add_col(c, 'usuarios', 'todas_empresas', 'todas_empresas INTEGER DEFAULT 0')
@@ -230,6 +311,9 @@ def init_db():
         _add_col(c, 'empresas', 'ultima_exec_nfce', 'ultima_exec_nfce TEXT')
         # Ambientes segregados: NFS-e emitidas x tomados (antes um so 'puxa_nfse').
         # Migracao unica: quem puxava NFS-e passa a puxar os dois.
+        # NF-e de saida por chave (consChNFe). Default 1: quem puxa NF-e tambem quer as vendas.
+        if _add_col(c, 'empresas', 'puxa_nfe_saida', 'puxa_nfe_saida INTEGER DEFAULT 1'):
+            c.execute('UPDATE empresas SET puxa_nfe_saida=COALESCE(puxa_nfe,0)')
         novo_p = _add_col(c, 'empresas', 'puxa_nfse_prestado', 'puxa_nfse_prestado INTEGER DEFAULT 1')
         novo_t = _add_col(c, 'empresas', 'puxa_nfse_tomado', 'puxa_nfse_tomado INTEGER DEFAULT 1')
         if novo_p or novo_t:

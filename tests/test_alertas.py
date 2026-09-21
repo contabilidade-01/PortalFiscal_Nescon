@@ -21,7 +21,8 @@ def _db():
 
 def _ins(cnpj, nome, validade, uf='SP', **flags):
     cols = {'cnpj': cnpj, 'nome': nome, 'uf': uf, 'validade': validade, 'senha_ok': 1, 'ativo': 1,
-            'arquivo': 'x.pfx', 'puxa_nfe': 1, 'puxa_nfse_prestado': 0, 'puxa_nfse_tomado': 0, 'puxa_nfce': 0}
+            'arquivo': 'x.pfx', 'puxa_nfe': 1, 'puxa_nfe_saida': 0, 'puxa_nfse_prestado': 0,
+            'puxa_nfse_tomado': 0, 'puxa_nfce': 0}
     cols.update(flags)
     with models.con() as c:
         c.execute('INSERT INTO empresas(%s) VALUES(%s)' % (','.join(cols), ','.join('?' * len(cols))),

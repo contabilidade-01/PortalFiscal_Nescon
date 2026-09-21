@@ -36,6 +36,7 @@
       <td>{% if ce[0] == 'falta' %}<span class="certbadge no">falta</span>{% elif ce[0] == 'vencido' %}<span class="certbadge no" title="venceu em {{ e['validade'] }}">vencido</span>{% else %}<span class="certbadge ok" title="válido até {{ e['validade'] }}">A1 ✓</span>{% endif %}</td>
       <td><div class="rowform" style="gap:5px">
         {% if e['puxa_nfe'] %}<span class="tag ent">NF-e Ent.</span>{% endif %}
+        {% if e['puxa_nfe_saida'] %}<span class="tag" style="color:#b45309">NF-e Saí.</span>{% endif %}
         {% if e['puxa_nfse_prestado'] %}<span class="tag sai">NFS-e Emit.</span>{% endif %}
         {% if e['puxa_nfse_tomado'] %}<span class="tag sai">NFS-e Tom.</span>{% endif %}
         {% if e['puxa_nfce'] %}<span class="tag" style="color:#15803d">NFC-e</span>{% endif %}

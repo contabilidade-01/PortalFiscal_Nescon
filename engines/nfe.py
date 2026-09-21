@@ -186,6 +186,77 @@ def puxar_entradas(emp):
         guard.registrar_ok(cnpj, 'distNSU')
     return total, parada
 
+def puxar_saidas_por_chave(emp, limite=None):
+    """NF-e de SAIDA: baixa por chave (consChNFe) com o certificado do PROPRIO cliente.
+
+    Base legal/tecnica: a distribuicao por NSU nao devolve ao emitente o que ele emitiu
+    (NT 2014.002), mas o consChNFe entrega o XML completo a quem e participante da nota —
+    e o emitente e'. Funciona em qualquer UF, sem autXML e sem robo de portal.
+    As chaves vem da fila (relatorio do emissor colado na tela, CSV, etc.).
+    """
+    cnpj, cuf = emp['cnpj'], emp['cuf'] or '35'
+    d0 = guard.pode(cnpj, 'distNSU')
+    if not d0.liberado:
+        return 0, d0.parada or 'cooldown'
+    if not emp['arquivo']:
+        return 0, 'sem_certificado'
+    limite = int(limite or NFE.get('max_chaves_por_run', 50))
+    chaves = models.chaves_pendentes(cnpj, limite)
+    if not chaves:
+        return 0, 'sem_chaves'
+    try: ctx, tmp = certs.ssl_ctx(emp['arquivo'], emp['senha'])
+    except Exception as e: return 0, 'erro_cert:%s' % str(e)[:40]
+    total = 0; parada = 'fim'; nao_achadas = 0
+    try:
+        for ch in chaves:
+            d = guard.pode(cnpj, 'distNSU')
+            if not d.liberado:
+                parada = d.parada or 'cooldown'
+                if parada == 'limite':
+                    guard.registrar_bloqueio(cnpj, 'distNSU', 'limite', nome=emp['nome'])
+                break
+            models.registrar_consulta(cnpj, 'distNSU')
+            st, b = _post(ctx, cuf, cnpj, '<consChNFe><chNFe>%s</chNFe></consChNFe>' % ch)
+            if st != 200:
+                models.marcar_chave(ch, 'erro', 'http_%d' % st)
+                parada = 'http_%d' % st; break
+            cS = _campo(b, 'cStat')
+            if cS == '138':                     # documento localizado
+                achou = False
+                for _nsu, schema, xml, sub, _cd in _docs_classificar(b, cnpj, eh_escritorio=False):
+                    # veio pelo consChNFe do emitente: e' venda propria
+                    _salvar(cnpj, schema, xml, '04_saida' if 'procNFe' in schema else sub)
+                    total += 1; achou = True
+                models.marcar_chave(ch, 'baixada' if achou else 'nao_encontrada',
+                                    '' if achou else 'cStat 138 sem docZip')
+            elif cS == '137':                   # nenhum documento localizado
+                nao_achadas += 1
+                models.marcar_chave(ch, 'nao_encontrada', 'cStat 137')
+            elif cS == '656':
+                models.marcar_chave(ch, 'erro', 'cStat 656')
+                parada = '656'; break
+            elif cS in ('108', '109'):
+                models.marcar_chave(ch, 'erro', 'cStat %s' % cS)
+                parada = cS; break
+            else:
+                models.marcar_chave(ch, 'erro', 'cStat %s' % cS)
+            guard.sleep_jitter(NFE_ESPERA)
+    finally:
+        for f in tmp:
+            try: os.remove(f)
+            except Exception: pass
+    if parada in ('656', '108', '109'):
+        guard.registrar_bloqueio(cnpj, 'distNSU', parada, nome=emp['nome'])
+    elif total:
+        guard.registrar_ok(cnpj, 'distNSU')
+    if parada == 'fim' and len(chaves) >= limite:
+        parada = 'cap'                          # ainda ha chaves na fila: worker retoma
+    with models.con() as c:
+        c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
+                  ('nfe_saida', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada,
+                   'chaves=%d | baixadas=%d | nao encontradas=%d' % (len(chaves), total, nao_achadas)))
+    return total, parada
+
 def puxar_saidas_escritorio():
     """Cert do escritorio (parametros office_*) -> vendas de clientes via autXML."""
     office = models.get_param('office_cnpj'); arq = models.get_param('office_arquivo')

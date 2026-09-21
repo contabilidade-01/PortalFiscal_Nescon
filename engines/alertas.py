@@ -26,7 +26,8 @@ FRACAO_FALHA = 0.8          # 80%+ das consultadas falharam
 
 # paradas normais/esperadas: NAO sao falha do ambiente (anti-ban e fluxo incremental)
 _NORMAIS = frozenset(('ok', 'fim', '137', 'cap', 'limite', 'cooldown', '656', '429',
-                      'circuito_aberto', 'sem_certificado', 'uf_nao_sp', 'cert_vencido'))
+                      'circuito_aberto', 'sem_certificado', 'uf_nao_sp', 'cert_vencido',
+                      'sem_chaves'))
 _ROTULO_MOTOR = {'nfe': 'NF-e Entradas', 'nfse': 'NFS-e', 'nfce': 'NFC-e'}
 _TIPO_EXEC = {'nfe': 'nfe_entrada', 'nfse': 'nfse', 'nfce': 'nfce'}
 

@@ -62,10 +62,12 @@ def test_sync_puxa_nfse_espelho_legado():
 
 def test_catalogo_ambientes():
     chaves = [a['chave'] for a in models.AMBIENTES]
-    assert chaves == ['nfe_entradas', 'nfse_emitidas', 'nfse_tomados', 'nfce']
+    assert chaves == ['nfe_entradas', 'nfe_saidas', 'nfse_emitidas', 'nfse_tomados', 'nfce']
     assert models.AMBIENTE_POR_CHAVE['nfse_tomados']['subs'] == ('01_tomado',)
     assert models.AMBIENTE_POR_CHAVE['nfse_emitidas']['subs'] == ('02_prestado',)
-    assert 'nfe_saidas' not in models.TIPO_PARA_PERM
+    assert models.AMBIENTE_POR_CHAVE['nfe_saidas']['por_chave'] is True
+    assert 'nfe_saidas' not in models.TIPO_PARA_PERM          # o job e' nfe_saidas_chave
+    assert models.TIPO_PARA_PERM['nfe_saidas_chave'] == 'exec_nfe_saidas'
 
 
 def test_saidas_escritorio_desligada_cancela_fila():

@@ -166,6 +166,7 @@ svg{display:block}
         <a href="{{ url_for('dashboard') }}" class="{{ 'active' if ep=='dashboard' }}">Painel</a>
         <div class="sub-h">Ambientes de captura</div>
         <a href="{{ url_for('ambiente', chave='nfe_entradas') }}" class="{{ 'active' if amb_atual=='nfe_entradas' }}">NF-e Entradas</a>
+        <a href="{{ url_for('ambiente', chave='nfe_saidas') }}" class="{{ 'active' if amb_atual=='nfe_saidas' }}">NF-e Saídas</a>
         <a href="{{ url_for('ambiente', chave='nfse_emitidas') }}" class="{{ 'active' if amb_atual=='nfse_emitidas' }}">NFS-e Emitidas</a>
         <a href="{{ url_for('ambiente', chave='nfse_tomados') }}" class="{{ 'active' if amb_atual=='nfse_tomados' }}">NFS-e Tomados</a>
         <a href="{{ url_for('ambiente', chave='nfce') }}" class="{{ 'active' if amb_atual=='nfce' }}">NFC-e</a>

@@ -4,6 +4,7 @@
   "pasta_local_extra": "",
   "nfe": {
     "max_lotes_por_run": 20,
+    "max_chaves_por_run": 50,
     "espera_seg": 2,
     "espera_entre_empresas_seg": 2,
     "cooldown_min": 65,

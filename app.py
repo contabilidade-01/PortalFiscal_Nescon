@@ -381,7 +381,8 @@ def _resumo_ambiente(amb, emp, com_linhas=False):
         if com_linhas:
             _, _, col_pos = _MOTOR_COLS[motor]
             linhas.append({'e': e, 'docs': docs, 'sit': sit, 'ate': ate, 'ult': ult.get(e['cnpj']),
-                           'pos': (e[col_pos] if col_pos else None)})
+                           'pos': (e[col_pos] if col_pos else None),
+                           'chaves': (models.resumo_chaves(e['cnpj']) if amb.get('por_chave') else None)})
         for sub, _rot in amb['extras']:
             k['extras'][sub] = k['extras'].get(sub, 0) + _xml_por_empresa(e['cnpj'], amb['doc'], (sub,))
     if com_linhas:
@@ -468,6 +469,41 @@ def ambiente_puxar(chave):
         flash('%s enfileirada (%d empresa(s)).' % (amb['rotulo'], len(alvos)) if alvos
               else 'Nenhuma empresa marcada com certificado no seu escopo.', 'ok' if alvos else 'erro')
     return redirect(url_for('ambiente', chave=chave))
+
+@app.route('/ambiente/nfe_saidas/chaves', methods=['POST'])
+@login_req
+def nfe_saidas_chaves():
+    """Enfileira chaves de NF-e de saída (colar do relatório do emissor / CSV).
+    Baixa depois por consChNFe com o certificado do próprio cliente."""
+    amb = models.AMBIENTE_POR_CHAVE['nfe_saidas']
+    u = usuario_atual()
+    if not models.tem_permissao(u, amb['perm']):
+        flash('Você não tem permissão para esta rotina.', 'erro')
+        return redirect(url_for('ambiente', chave='nfe_saidas'))
+    cnpj = re.sub(r'\D', '', request.form.get('cnpj') or '')
+    if not cnpj or not _pode_ver_cnpj(cnpj):
+        abort(403)
+    texto = request.form.get('chaves') or ''
+    f = request.files.get('arquivo')
+    if f and f.filename:
+        try:
+            texto += '\n' + f.read().decode('utf-8', 'ignore')
+        except Exception:
+            flash('Não consegui ler o arquivo enviado.', 'erro')
+    chaves = models.extrair_chaves(texto)
+    if not chaves:
+        flash('Nenhuma chave de 44 dígitos encontrada no que você enviou.', 'erro')
+        return redirect(url_for('ambiente', chave='nfe_saidas'))
+    novas, rep, inval, outro = models.adicionar_chaves(cnpj, chaves, origem='manual')
+    partes = ['%d chave(s) na fila' % novas]
+    if rep: partes.append('%d já estavam' % rep)
+    if inval: partes.append('%d inválida(s) (dígito verificador)' % inval)
+    if outro: partes.append('%d de outro CNPJ (ignoradas)' % outro)
+    flash(' · '.join(partes) + '.', 'ok' if novas else 'erro')
+    if novas:
+        worker.enfileirar('nfe_saidas_chave', escopo=cnpj, origem='manual', user_id=session.get('uid'))
+        flash('Download enfileirado — acompanhe na barra de progresso.', 'ok')
+    return redirect(url_for('ambiente', chave='nfe_saidas'))
 
 @app.route('/parametros', methods=['GET', 'POST'])
 @admin_required
@@ -1029,9 +1065,8 @@ def run_nfe_entradas():
 @admin_required
 def run_nfe_saidas():
     if not models.SAIDAS_ESCRITORIO_ATIVO:
-        flash('NF-e Saídas pelo escritório está desligada: as vendas de cada empresa já chegam '
-              'em NF-e Entradas (vendas próprias).', 'erro')
-        return redirect(url_for('ambiente', chave='nfe_entradas'))
+        # o caminho atual de saidas e' por chave (consChNFe) — ver ambiente NF-e Saídas
+        return redirect(url_for('ambiente', chave='nfe_saidas'))
     n = _enfileirar_escopo('nfe_saidas', user_id=session.get('uid'))
     if n == 0:
         flash('Nenhuma empresa no seu escopo.', 'erro')

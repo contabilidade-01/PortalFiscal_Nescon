@@ -31,7 +31,8 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   'uf_nao_sp': ('Fora de SP','nt'), 'erro': ('Falhou','er'), 'resposta_invalida': ('Resposta inválida','er'),
   'erro_rede': ('Erro de rede','er'), 'erro_cert': ('Erro no certificado','er'), 'reset': ('Rebaixar histórico','nt'),
   'cert_vencido': ('Certificado vencido','er'), 'http_403': ('Certificado recusado (403)','er'),
-  'cStat_104': ('Período fora dos 100 dias','er')
+  'cStat_104': ('Período fora dos 100 dias','er'), 'sem_chaves': ('Sem chaves na fila','nt'),
+  'nao_encontrada': ('Não localizada','wr')
 } %}
 {# parada pode vir com detalhe ('erro_rede:...', 'http_503', 'cStat_215'): rotula pelo prefixo #}
 {% macro rot(parada) -%}
@@ -104,13 +105,38 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   {% endif %}
 </div>
 
+{% if amb.por_chave and tem_perm(amb.perm) %}
+<div class="card" style="border-color:color-mix(in srgb,var(--ac) 30%,var(--line))" >
+  <h2>Adicionar chaves para baixar</h2>
+  <p class="desc">Cole aqui as <b>chaves de acesso (44 dígitos)</b> das notas que a empresa emitiu — do relatório
+    do emissor, de um CSV ou de um e-mail. Pode colar o texto inteiro: eu separo as chaves sozinho, valido o
+    dígito verificador e descarto o que for de outro CNPJ. O XML vem direto da SEFAZ com o certificado da
+    própria empresa, sem depender do cliente configurar nada.</p>
+  <form method="post" action="{{ url_for('nfe_saidas_chaves') }}" enctype="multipart/form-data">
+    <div class="row" style="align-items:flex-end">
+      <div style="min-width:280px">
+        <label>Empresa (emitente)</label>
+        <select name="cnpj" required>
+          <option value="">Selecione…</option>
+          {% for x in linhas %}{% if x.e['senha_ok'] %}<option value="{{ x.e['cnpj'] }}">{{ x.e['nome']|title }} — {{ x.e['cnpj'] }}</option>{% endif %}{% endfor %}
+        </select>
+      </div>
+      <div><label>Arquivo (CSV/TXT) — opcional</label><input type="file" name="arquivo" accept=".csv,.txt,.xml"></div>
+    </div>
+    <label>Chaves (cole aqui)</label>
+    <textarea name="chaves" rows="4" style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2);color:var(--txt);font-family:ui-monospace,Consolas,monospace;font-size:13px" placeholder="35260952747415000127550010000000051300000054&#10;35260852747415000127550010000000041300000045"></textarea>
+    <button class="btn btn-primary" style="margin-top:12px">Enfileirar e baixar</button>
+  </form>
+</div>
+{% endif %}
+
 <div class="card">
   <div class="between" style="margin-bottom:12px">
     <h2 style="margin:0">Empresas neste ambiente <span class="tag">{{ linhas|length }}</span></h2>
     <form method="get" class="filtro"><input name="q" value="{{ q }}" placeholder="filtrar nome ou CNPJ"><button class="btn btn-ghost sm">Filtrar</button>{% if q %}<a class="btn btn-ghost sm" href="{{ url_for('ambiente', chave=amb.chave) }}">Limpar</a>{% endif %}</form>
   </div>
   <div class="tbl-wrap"><table style="min-width:940px">
-    <thead><tr><th>Empresa</th><th>Certificado</th><th>XML</th><th>Última busca</th><th>{{ 'Posição (NSU)' if amb.motor != 'nfce' else 'Última execução' }}</th><th>Situação</th><th></th></tr></thead>
+    <thead><tr><th>Empresa</th><th>Certificado</th><th>XML</th><th>Última busca</th><th>{{ 'Fila de chaves' if amb.por_chave else ('Posição (NSU)' if amb.motor != 'nfce' else 'Última execução') }}</th><th>Situação</th><th></th></tr></thead>
     <tbody>
     {% for x in linhas %}{% set e = x.e %}{% set ce = cert_estado(e) %}
     <tr>
@@ -124,7 +150,13 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
         <div class="muted">{{ x.ult['quando'] }} · {{ x.ult['docs'] }} doc(s)</div>
         {{ rot(x.ult['parada']) }}
       {% else %}<span class="muted">nunca</span>{% endif %}</td>
-      <td class="mono">{% if amb.motor != 'nfce' %}{{ (x.pos or 0)|int }}{% else %}{{ e['ultima_exec_nfce'] or '—' }}{% endif %}</td>
+      <td class="mono">{% if amb.por_chave %}{% set k = x.chaves or {} %}
+          {% if k %}<span class="st ok" title="baixadas">{{ k.get('baixada', 0) }} ok</span>
+            {% if k.get('pendente') %} <span class="st nt">{{ k['pendente'] }} na fila</span>{% endif %}
+            {% if k.get('nao_encontrada') %} <span class="st wr" title="a SEFAZ não localizou">{{ k['nao_encontrada'] }}</span>{% endif %}
+            {% if k.get('erro') %} <span class="st er">{{ k['erro'] }} erro</span>{% endif %}
+          {% else %}<span class="muted">sem chaves</span>{% endif %}
+        {% elif amb.motor != 'nfce' %}{{ (x.pos or 0)|int }}{% else %}{{ e['ultima_exec_nfce'] or '—' }}{% endif %}</td>
       <td>{% if x.sit == 'circuito' %}<span class="st er">circuito aberto</span>
           {% elif x.sit == 'cooldown' %}<span class="st wr" title="libera em {{ x.ate }}">espera até {{ x.ate[11:16] }}</span>
           {% else %}<span class="st ok">livre</span>{% endif %}</td>

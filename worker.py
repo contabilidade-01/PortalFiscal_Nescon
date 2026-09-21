@@ -203,6 +203,10 @@ def _executar(job):
         # Ciencia apos cada entrada: libera o XML completo na proxima distNSU.
         etapa_empresas('Entradas NF-e', 'puxa_nfe', nfe.puxar_entradas, 'nfe_entradas', 'nfe',
                        com_ciencia=True, espera_seg=NFE_ENTRE_EMPRESAS)
+    if tipo in ('nfe_saidas_chave', 'completo'):
+        # Vendas proprias: a SEFAZ so entrega por chave (consChNFe) ao emitente.
+        etapa_empresas('Saídas NF-e (por chave)', 'puxa_nfe_saida', nfe.puxar_saidas_por_chave,
+                       'nfe_saidas_chave', 'nfe', espera_seg=NFE_ENTRE_EMPRESAS)
     if tipo == 'ciencia':
         emps = _empresas(escopo, 'puxa_nfe'); _upd(jid, total=len(emps), feitos=0, mensagem='Ciencia 210210')
         for i, e in enumerate(emps, 1):
