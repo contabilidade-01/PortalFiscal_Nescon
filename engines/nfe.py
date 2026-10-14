@@ -11,7 +11,7 @@ from engines.pausa import NFE_ESPERA, nsu15
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
-SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG['pasta_saida_xml']; NFE = CFG['nfe']
+SAIDA = models.XML_DIR; NFE = CFG['nfe']
 HOST = 'www1.nfe.fazenda.gov.br'; PATH = '/NFeDistribuicaoDFe/NFeDistribuicaoDFe.asmx'
 ACTION = 'http://www.portalfiscal.inf.br/nfe/wsdl/NFeDistribuicaoDFe/nfeDistDFeInteresse'
 TPAMB = os.environ.get('FISCAL_TPAMB', '1')  # 1=Producao (default) | 2=Homologacao

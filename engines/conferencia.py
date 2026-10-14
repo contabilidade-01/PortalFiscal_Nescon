@@ -12,11 +12,10 @@ from engines import cfop as cfopmod
 from engines import monofasico as monomod
 from engines import st as stmod
 
-# Reaproveita o mesmo SAIDA do nfe/nfse
+# Reaproveita o mesmo XML_DIR (volume no Docker; config.json so no Windows local)
 def _saida_path():
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    CFG = json.load(open(os.path.join(base, 'config.json'), encoding='utf-8'))
-    return os.environ.get('FISCAL_XML_DIR') or CFG['pasta_saida_xml']
+    import models
+    return models.XML_DIR
 
 SAIDA = _saida_path()
 

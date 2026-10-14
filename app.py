@@ -24,9 +24,11 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 CFG = json.load(open(os.path.join(BASE, 'config.json'), encoding='utf-8'))
 # Em producao, DATA_DIR (volume) separa dados do codigo. Local: cai nos defaults atuais.
 CERT_DIR = os.path.join(models.DATA_DIR, 'Certificados')
-SAIDA = os.environ.get('FISCAL_XML_DIR') or CFG.get('pasta_saida_xml') or os.path.join(models.DATA_DIR, 'XML')
+SAIDA = models.XML_DIR
 os.makedirs(CERT_DIR, exist_ok=True)
 os.makedirs(SAIDA, exist_ok=True)
+print('portal-fiscal DATA_DIR=%s DB=%s XML=%s docker=%s' % (
+    models.DATA_DIR, models.DB, SAIDA, models.em_docker()), flush=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'portal-fiscal-nescon-dev-trocar-em-producao')
@@ -65,6 +67,9 @@ def healthz():
             'empresas': d['empresas'],
             'jobs': d['jobs'],
             'data_dir': d['data_dir'],
+            'xml_dir': d.get('xml_dir'),
+            'xml_no_volume': d.get('xml_no_volume'),
+            'db': d.get('db'),
         }, 200
     except Exception as e:
         return {'ok': False, 'erro': str(e)[:200]}, 200
