@@ -172,6 +172,8 @@ def conferencia(cnpjs, ano_mes=None, incluir_canceladas=False):
             if ano_mes and comp != ano_mes: continue
             d = parse_doc(path)
             if not d: continue
+            if sub == SUB_CANCELADA:
+                d['cancelada'] = True
             if d['cancelada']:
                 key = (comp, modelo, sub)
                 bucket.setdefault(key, {'qtd':0,'valor':0.0,'canceladas':0})
@@ -198,6 +200,10 @@ def conferencia(cnpjs, ano_mes=None, incluir_canceladas=False):
 #   NFCe/01_venda -> vendas NFC-e (modelo 65, varejo)
 #   NFSe/02_prestado -> servicos PRESTADOS pela empresa
 # NFe entradas (compras) e NFSe tomadas (servicos contratados) NAO entram.
+# Venda com cancelamento homologado vinda da importacao manual (engines/importar_xml):
+# fica fora de 04_saida/01_venda (faturamento), mas conta como cancelada aqui.
+SUB_CANCELADA = '09_cancelada'
+
 SUBS_PROPRIAS = {
     'NFe':  {'04_saida', '05_propria'},
     'NFCe': {'01_venda'},
@@ -222,9 +228,11 @@ def auditoria_numeracao(cnpjs, ano_mes=None, modelos=None, contar_canceladas=Tru
         for comp, modelo, sub, path in _listar_xmls(cdir):
             if ano_mes and comp != ano_mes: continue
             if modelo not in modelos: continue
-            if sub not in SUBS_PROPRIAS.get(modelo, set()): continue
+            if sub not in SUBS_PROPRIAS.get(modelo, set()) and sub != SUB_CANCELADA: continue
             d = parse_doc(path)
             if not d: continue
+            if sub == SUB_CANCELADA:
+                d['cancelada'] = True
             try: nnf = int(d['nNF'])
             except Exception: continue
             serie = d['serie'] or '0'

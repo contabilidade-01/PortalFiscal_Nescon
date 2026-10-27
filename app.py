@@ -15,6 +15,7 @@ import models
 import worker
 from engines import certs, nfe, nfse, conferencia, cfop, monofasico
 from engines import backup as bak
+from engines import importar_xml
 from engines import mail as mailer
 from engines import guard
 import time
@@ -453,9 +454,58 @@ def ambiente(chave):
     # execucoes so das empresas visiveis e marcadas neste ambiente
     cnpjs = {e['cnpj'] for e in emp if (e[amb['col']] or 0)}
     execs = [x for x in execs if x['cnpj'] in cnpjs]
+    # Importacao de XML: qualquer empresa visivel (ex.: NFC-e da BA, que nao pode ser marcada)
+    emp_import = (sorted(emp, key=lambda e: (e['nome'] or '').lower())
+                  if chave in IMPORTA_DOC else [])
     return render_template('ambiente.html', amb=amb, k=k, linhas=linhas, puladas=puladas,
                            execs=execs, q=request.args.get('q', ''), rodando=_job_do_ambiente(amb),
-                           ambientes=models.AMBIENTES)
+                           ambientes=models.AMBIENTES, emp_import=emp_import)
+
+# Paginas que aceitam importar XML de vendas (o modelo vem de cada XML, nao da pagina)
+IMPORTA_DOC = {'nfce': 'nfce', 'nfe_saidas': 'nfe_saida'}
+
+@app.route('/ambiente/<chave>/importar', methods=['POST'])
+@perm_required('importar_xml')
+def ambiente_importar(chave):
+    """Importa XML de vendas (NF-e/NFC-e) exportados do emissor/PDV do cliente."""
+    if chave not in IMPORTA_DOC:
+        abort(404)
+    volta = redirect(url_for('ambiente', chave=chave))
+    cnpj = re.sub(r'\D', '', request.form.get('cnpj') or '')
+    if not cnpj or not _pode_ver_cnpj(cnpj):
+        flash('Selecione uma empresa do seu escopo.', 'erro'); return volta
+    uploads = [(f.filename, f.read()) for f in request.files.getlist('arquivos') if f and f.filename]
+    if not uploads:
+        flash('Selecione o .zip ou os arquivos .xml.', 'erro'); return volta
+    try:
+        r = importar_xml.importar(cnpj, uploads, SAIDA)
+    except ValueError as e:
+        flash(str(e), 'erro'); return volta
+    with models.con() as c:
+        emp = c.execute('SELECT nome FROM empresas WHERE cnpj=?', (cnpj,)).fetchone()
+        agora = datetime.now().strftime('%Y-%m-%d %H:%M')
+        for doc, tipo in (('NFCe', 'nfce'), ('NFe', 'nfe_saida')):
+            if r.importadas[doc]:
+                c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
+                          (tipo, cnpj, emp['nome'] if emp else cnpj, agora, r.importadas[doc], 'importado',
+                           'importado por %s' % (session.get('nome') or '?')))
+    partes = []
+    if r.importadas['NFCe']: partes.append('%d NFC-e' % r.importadas['NFCe'])
+    if r.importadas['NFe']: partes.append('%d NF-e' % r.importadas['NFe'])
+    msg = ('Importadas: %s.' % ' e '.join(partes)) if partes else 'Nenhuma nota nova importada.'
+    extra = []
+    if r.canceladas: extra.append('%d cancelada(s), guardadas fora do faturamento' % r.canceladas)
+    if r.eventos: extra.append('%d evento(s)' % r.eventos)
+    if r.repetidas: extra.append('%d já estavam no portal' % r.repetidas)
+    if r.ignorados: extra.append('%d ignorado(s) (inutilização/resumo)' % r.ignorados)
+    flash(msg + ((' ' + ' · '.join(extra) + '.') if extra else ''), 'ok' if r.total_importadas or r.eventos else 'erro')
+    recusados = r.outro_emitente + r.nao_autorizadas + r.invalidos
+    if recusados:
+        exemplos = '; '.join('%s: %s' % (os.path.basename(n), m) for n, m in r.erros[:5])
+        flash('%d arquivo(s) recusado(s) — %d de outro emitente (ex.: notas de compra), %d sem autorização, '
+              '%d inválido(s). Ex.: %s' % (recusados, r.outro_emitente, r.nao_autorizadas, r.invalidos, exemplos),
+              'erro')
+    return volta
 
 @app.route('/ambiente/<chave>/puxar', methods=['POST'])
 @login_req

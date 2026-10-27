@@ -26,6 +26,7 @@ PERMISSOES = [
     ('vincular_certificado', 'Vincular certificado digital (só empresas do escopo)'),
     ('parametros_captura', 'Marcar parâmetros de captura (só empresas do escopo)'),
     ('excluir_cliente', 'Excluir cadastro de cliente (só empresas do escopo)'),
+    ('importar_xml', 'Importar XML de vendas — NF-e e NFC-e (só empresas do escopo)'),
 ]
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 
@@ -83,7 +84,7 @@ AMBIENTES = [
      'subs': ('01_venda',), 'extras': (),
      'motor': 'nfce', 'tipo_job': 'nfce', 'tipo_exec': 'nfce', 'perm': 'exec_nfce', 'cor': '#15803d',
      'desc': 'Vendas de varejo/consumidor (modelo 65) — SEFAZ-SP, por período. Data inicial e limite em '
-             'Configurações.'},
+             'Configurações. Fora de SP a SEFAZ não entrega a NFC-e: importe os XML do PDV do cliente.'},
 ]
 AMBIENTE_POR_CHAVE = {a['chave']: a for a in AMBIENTES}
 # Condicao SQL de "empresa entra na varredura" por motor (NFS-e = emitidas OU tomados).
