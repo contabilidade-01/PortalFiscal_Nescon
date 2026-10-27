@@ -506,11 +506,15 @@ def nfe_saidas_chaves():
     return redirect(url_for('ambiente', chave='nfe_saidas'))
 
 @app.route('/parametros', methods=['GET', 'POST'])
-@admin_required
+@perm_required('parametros_captura')
 def parametros_captura():
-    """Tela unica de marcacao: empresas x ambientes de captura."""
+    """Tela unica de marcacao: empresas x ambientes de captura.
+    Operador com a permissao so ve e marca as empresas do proprio escopo."""
     if request.method == 'POST':
         ids = [int(i) for i in request.form.getlist('ids') if i.isdigit()]
+        visiveis = _visiveis_ids()
+        if visiveis is not None:
+            ids = [i for i in ids if i in set(visiveis)]
         recusadas = []
         with models.con() as c:
             ufs = {r['id']: r for r in c.execute('SELECT id, nome, uf FROM empresas').fetchall()}
@@ -532,7 +536,7 @@ def parametros_captura():
     q = (request.args.get('q') or '').strip().lower()
     filtro = request.args.get('filtro', '')
     with models.con() as c:
-        emp = c.execute('SELECT * FROM empresas ORDER BY ativo DESC, nome').fetchall()
+        emp = _scope(c.execute('SELECT * FROM empresas ORDER BY ativo DESC, nome').fetchall())
     tot = {a['chave']: sum(1 for e in emp if e['ativo'] and (e[a['col']] or 0)) for a in models.AMBIENTES}
     def _ok(e):
         if q and q not in (e['nome'] or '').lower() and q not in (e['cnpj'] or ''):

@@ -173,7 +173,7 @@ svg{display:block}
         <div class="sub-h">Cadastro</div>
         <a href="{{ url_for('clientes') }}" class="{{ 'active' if ep in ['clientes','cliente_novo','cliente_editar'] }}">Clientes</a>
         <a href="{{ url_for('certificados') }}" class="{{ 'active' if ep=='certificados' }}">Certificados</a>
-        {% if papel_atual == 'admin' %}
+        {% if tem_perm('parametros_captura') %}
         <a href="{{ url_for('parametros_captura') }}" class="{{ 'active' if ep=='parametros_captura' }}">Parâmetros de captura</a>
         {% endif %}
         {% if tem_perm('download') %}

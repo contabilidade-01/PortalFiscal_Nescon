@@ -93,3 +93,26 @@ def test_tela_mostra_upload_so_com_permissao():
     assert b'cert/upload' not in _setup([]).get('/certificados').data
     html = _setup(['vincular_certificado']).get('/certificados').data
     assert b'cert/upload' in html and b'cert/scan' not in html
+
+
+# ---- Parametros de captura ----
+def _ids():
+    with models.con() as c:
+        return {r['cnpj']: r['id'] for r in c.execute('SELECT id, cnpj FROM empresas').fetchall()}
+
+
+def test_parametros_exige_permissao():
+    r = _setup([]).get('/parametros')
+    assert r.status_code == 302 and b'Par\xc3\xa2metros de captura' not in _setup([]).get('/certificados').data
+
+
+def test_parametros_operador_ve_e_marca_so_o_escopo():
+    cli = _setup(['parametros_captura'])
+    html = cli.get('/parametros').data
+    assert CNPJ_ESCOPO.encode() in html and CNPJ_FORA.encode() not in html
+    ids = _ids()
+    assert _emp(CNPJ_ESCOPO)['puxa_nfe'] == 1 and _emp(CNPJ_FORA)['puxa_nfe'] == 1
+    # Desmarca NF-e Entradas das duas: so a do escopo pode mudar.
+    cli.post('/parametros', data={'ids': [ids[CNPJ_ESCOPO], ids[CNPJ_FORA]]})
+    assert _emp(CNPJ_ESCOPO)['puxa_nfe'] == 0
+    assert _emp(CNPJ_FORA)['puxa_nfe'] == 1
