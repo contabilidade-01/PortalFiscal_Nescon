@@ -22,6 +22,7 @@
 </div>
 
 <!-- Controles de vinculo (a parte da base de clientes) -->
+{% if tem_perm('vincular_certificado') %}
 <div class="grid">
   <div class="card">
     <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5M12 3v12"/></svg> Vincular (upload)</h2>
@@ -32,6 +33,7 @@
       <button class="btn btn-primary" style="margin-top:14px">Vincular</button>
     </form>
   </div>
+  {% if papel_atual == 'admin' %}
   <div class="card">
     <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg> Vincular em lote (pasta)</h2>
     <p class="desc">Varre a pasta e casa cada .pfx (senha do nome) com a empresa pelo CNPJ.</p>
@@ -40,7 +42,8 @@
       <button class="btn btn-ghost" style="margin-top:14px">Varrer e vincular</button>
     </form>
   </div>
-  {% if saidas_ativo %}
+  {% endif %}
+  {% if saidas_ativo and papel_atual == 'admin' %}
   <div class="card">
     <h2><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--brand2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l7-4 7 4v14"/></svg> Cert do escritório <span class="tag sai">saídas</span></h2>
     <p class="desc">Puxa as vendas via autXML. {% if office %}<b style="color:var(--ok)">Configurado ({{ office }}).</b>{% endif %}</p>
@@ -53,6 +56,9 @@
   </div>
   {% endif %}
 </div>
+{% else %}
+<div class="card"><p class="desc" style="margin:0">Para vincular certificados, peça ao administrador a permissão <b>“Vincular certificado digital”</b> no seu usuário.</p></div>
+{% endif %}
 
 <!-- Abas Com / Sem -->
 <div class="tabs">
