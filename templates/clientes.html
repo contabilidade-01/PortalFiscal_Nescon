@@ -23,7 +23,7 @@
       <form method="get" class="rowform" style="margin:0"><input name="q" value="{{ q }}" placeholder="buscar nome/CNPJ" class="mini" style="width:180px"><button class="btn btn-ghost sm">Buscar</button></form>
     </div>
   </div>
-  <p class="desc" style="margin-top:-6px">Os ambientes de captura de cada cliente são marcados em {% if papel_atual=='admin' %}<a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>{% else %}Parâmetros de captura (admin){% endif %} ou no Editar. Aqui: emissor e ativo (o tick de ativo salva na hora).</p>
+  <p class="desc" style="margin-top:-6px">Os ambientes de captura de cada cliente são marcados em {% if tem_perm('parametros_captura') %}<a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>{% else %}Parâmetros de captura (admin){% endif %} ou no Editar. Aqui: emissor e ativo (o tick de ativo salva na hora).</p>
   <div class="tbl-wrap">
   <table style="min-width:900px">
     <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Ambientes</th><th>Emissor · Ativo</th><th>Ações</th></tr></thead>

@@ -56,7 +56,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
       <p class="desc" style="margin:0">{{ amb.desc }}</p>
     </div>
     <div class="row" style="align-items:center">
-      {% if papel_atual=='admin' %}<a class="btn btn-ghost sm" href="{{ url_for('parametros_captura') }}">Marcar empresas</a>{% endif %}
+      {% if tem_perm('parametros_captura') %}<a class="btn btn-ghost sm" href="{{ url_for('parametros_captura') }}">Marcar empresas</a>{% endif %}
       {% if tem_perm(amb.perm) %}
       <form method="post" action="{{ url_for('ambiente_puxar', chave=amb.chave) }}" style="margin:0"
             onsubmit="return confirm('Puxar {{ amb.rotulo }} de todas as empresas marcadas{{ ' (a consulta ao ADN traz emitidas e tomados juntos)' if amb.motor=='nfse' else '' }}?');">
@@ -91,13 +91,13 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   {% if k.fora_sp %}
   <div class="warnbox">⚠️ <b>{{ k.fora_sp|length }} empresa(s) marcada(s) em NFC-e fora de SP — o serviço da SEFAZ-SP só atende SP e elas são puladas:</b>
     {% for e in k.fora_sp %}{{ e['nome']|title }} ({{ e['uf'] }}){{ ', ' if not loop.last }}{% endfor %}.
-    {% if papel_atual=='admin' %}Desmarque em <a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>.{% endif %}
+    {% if tem_perm('parametros_captura') %}Desmarque em <a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>.{% endif %}
   </div>
   {% endif %}
   {% if puladas %}
   <div class="warnbox">⚠️ <b>{{ puladas|length }} empresa(s) marcada(s) sem certificado — são puladas na busca:</b>
     {% for e in puladas[:12] %}{{ e['nome']|title }}{{ ', ' if not loop.last }}{% endfor %}{% if puladas|length > 12 %} e mais {{ puladas|length - 12 }}{% endif %}.
-    Vincule em <a href="{{ url_for('certificados') }}">Certificados</a>{% if papel_atual=='admin' %} ou desmarque em <a href="{{ url_for('parametros_captura', filtro='sem_cert') }}">Parâmetros</a>{% endif %}.
+    Vincule em <a href="{{ url_for('certificados') }}">Certificados</a>{% if tem_perm('parametros_captura') %} ou desmarque em <a href="{{ url_for('parametros_captura', filtro='sem_cert') }}">Parâmetros</a>{% endif %}.
   </div>
   {% endif %}
   {% if amb.motor == 'nfse' %}
@@ -167,7 +167,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
         </form>{% endif %}</td>
     </tr>
     {% else %}
-    <tr><td colspan="7" class="muted" style="text-align:center;padding:28px">Nenhuma empresa marcada neste ambiente{{ ' com esse filtro' if q }}.{% if papel_atual=='admin' %} <a href="{{ url_for('parametros_captura') }}">Marcar em Parâmetros de captura →</a>{% endif %}</td></tr>
+    <tr><td colspan="7" class="muted" style="text-align:center;padding:28px">Nenhuma empresa marcada neste ambiente{{ ' com esse filtro' if q }}.{% if tem_perm('parametros_captura') %} <a href="{{ url_for('parametros_captura') }}">Marcar em Parâmetros de captura →</a>{% endif %}</td></tr>
     {% endfor %}
     </tbody>
   </table></div>
