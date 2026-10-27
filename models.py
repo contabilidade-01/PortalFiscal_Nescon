@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Portal Fiscal Nescon - camada de dados.
    - empresas: base UNICA (NFe + NFSe), flags por cliente.
-   - usuarios + usuario_empresas + usuario_permissoes: RBAC.
+   - usuarios + usuario_empresas + usuario_carteiras + usuario_permissoes: RBAC.
    - password_reset_tokens: recuperacao de senha (hash + validade).
    - jobs: fila de execucoes em background com status persistente.
    - consultas_log: controle anti-bloqueio (limites por CNPJ/certificado).
@@ -25,8 +25,18 @@ PERMISSOES = [
     ('download', 'Baixar XML por competência'),
     ('vincular_certificado', 'Vincular certificado digital (só empresas do escopo)'),
     ('parametros_captura', 'Marcar parâmetros de captura (só empresas do escopo)'),
+    ('excluir_cliente', 'Excluir cadastro de cliente (só empresas do escopo)'),
 ]
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
+
+# Carteiras da base unica de clientes. Toda empresa pertence a uma; o operador ve as
+# carteiras liberadas a ele (inclusive empresas cadastradas depois). O robo e as
+# rotinas agendadas continuam rodando para TODAS as empresas, de qualquer carteira.
+CARTEIRAS = ('Nescon', 'Jean')
+CARTEIRA_PADRAO = CARTEIRAS[0]
+
+def carteira_valida(v):
+    return next((c for c in CARTEIRAS if c.lower() == (v or '').strip().lower()), CARTEIRA_PADRAO)
 TIPO_PARA_PERM = {
     'nfe_entradas': 'exec_nfe_entradas',
     'nfe_saidas_chave': 'exec_nfe_saidas',
@@ -211,6 +221,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS usuario_empresas(
           user_id INTEGER, empresa_id INTEGER, PRIMARY KEY(user_id, empresa_id));
 
+        -- RBAC: carteiras inteiras que o operador ve (somam com usuario_empresas)
+        CREATE TABLE IF NOT EXISTS usuario_carteiras(
+          user_id INTEGER, carteira TEXT, PRIMARY KEY(user_id, carteira));
+
         -- RBAC: rotinas liberadas para operadores (admin ignora esta tabela)
         CREATE TABLE IF NOT EXISTS usuario_permissoes(
           user_id INTEGER, permissao TEXT, PRIMARY KEY(user_id, permissao));
@@ -307,6 +321,9 @@ def init_db():
         _add_col(c, 'usuarios', 'ativo', 'ativo INTEGER DEFAULT 1')
         _add_col(c, 'usuarios', 'email', 'email TEXT')
         _add_col(c, 'ciencia_dada', 'nProt', 'nProt TEXT')  # protocolo da Ciencia
+        # Carteira (Nescon/Jean): empresas antigas ficam na carteira padrao.
+        _add_col(c, 'empresas', 'carteira', "carteira TEXT DEFAULT '%s'" % CARTEIRA_PADRAO)
+        c.execute("UPDATE empresas SET carteira=? WHERE carteira IS NULL OR carteira=''", (CARTEIRA_PADRAO,))
         # NFC-e SP (modelo 65 - varejo)
         _add_col(c, 'empresas', 'puxa_nfce', 'puxa_nfce INTEGER DEFAULT 0')
         _add_col(c, 'empresas', 'total_nfce', 'total_nfce INTEGER DEFAULT 0')
@@ -374,12 +391,30 @@ def init_db():
 
 # ---------- RBAC ----------
 def empresas_visiveis_ids(user):
-    """IDs de empresas que o usuario pode ver. None = todas."""
+    """IDs de empresas que o usuario pode ver. None = todas.
+    Operador: empresas das carteiras liberadas + empresas marcadas uma a uma."""
     if user['papel'] == 'admin' or user['todas_empresas']:
         return None
     with con() as c:
-        return [r['empresa_id'] for r in
-                c.execute('SELECT empresa_id FROM usuario_empresas WHERE user_id=?', (user['id'],)).fetchall()]
+        ids = {r['empresa_id'] for r in
+               c.execute('SELECT empresa_id FROM usuario_empresas WHERE user_id=?', (user['id'],)).fetchall()}
+        ids |= {r['id'] for r in
+                c.execute('SELECT e.id FROM empresas e JOIN usuario_carteiras uc ON uc.carteira=e.carteira '
+                          'WHERE uc.user_id=?', (user['id'],)).fetchall()}
+    return sorted(ids)
+
+def carteiras_do_usuario(user_id):
+    with con() as c:
+        return {r['carteira'] for r in
+                c.execute('SELECT carteira FROM usuario_carteiras WHERE user_id=?', (user_id,)).fetchall()}
+
+def salvar_carteiras(user_id, carteiras):
+    """Substitui as carteiras liberadas ao operador."""
+    validas = [k for k in CARTEIRAS if k in set(carteiras)]
+    with con() as c:
+        c.execute('DELETE FROM usuario_carteiras WHERE user_id=?', (user_id,))
+        for k in validas:
+            c.execute('INSERT OR IGNORE INTO usuario_carteiras(user_id,carteira) VALUES(?,?)', (user_id, k))
 
 def pode_ver_empresa(user, empresa_id):
     ids = empresas_visiveis_ids(user)

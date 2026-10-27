@@ -36,15 +36,22 @@
       </div>
       <div style="display:flex;gap:22px;flex-wrap:wrap;margin-top:14px">
         <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (u['ativo'] if u else 1) }}> Ativo</label>
-        <label class="chk"><input type="checkbox" name="todas_empresas" id="todas" onchange="toggleTodas()" {{ 'checked' if u and u['todas_empresas'] }}> Acesso a TODAS as empresas</label>
+        <label class="chk"><input type="checkbox" name="todas_empresas" id="todas" onchange="toggleTodas()" {{ 'checked' if u and u['todas_empresas'] }}> Acesso a TODAS as empresas (todas as carteiras)</label>
       </div>
 
       <div id="boxEmpresas">
-        <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:16px 0 4px;font-weight:700">Empresas que este operador pode ver/baixar</h3>
+        <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:16px 0 4px;font-weight:700">Carteiras que este operador pode ver</h3>
+        <p class="muted" style="font-size:12.5px;margin:0 0 4px">Libera todas as empresas da carteira, inclusive as cadastradas depois. Carteira desmarcada fica invisível para ele.</p>
+        <div class="permlist">
+          {% for k in carteiras %}
+          <label><input type="checkbox" name="carteiras" value="{{ k }}" {{ 'checked' if k in cart_sel }}> Carteira {{ k }}</label>
+          {% endfor %}
+        </div>
+        <h3 style="font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);margin:16px 0 4px;font-weight:700">Empresas avulsas (além das carteiras acima)</h3>
         <div class="emplist">
           {% for e in empresas %}
           <label><input type="checkbox" name="empresas" value="{{ e['id'] }}" {{ 'checked' if e['id'] in sel }}>
-            {{ e['nome']|title }} <span class="mono muted">{{ e['cnpj'] }}</span></label>
+            {{ e['nome']|title }} <span class="mono muted">{{ e['cnpj'] }}</span> <span class="tag">{{ e['carteira'] }}</span></label>
           {% endfor %}
         </div>
       </div>

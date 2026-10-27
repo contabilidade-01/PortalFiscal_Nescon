@@ -23,6 +23,11 @@
           {% if e %}<input value="{{ e['cnpj'] }}" disabled>{% else %}<input name="cnpj" placeholder="somente números" required>{% endif %}
         </div>
         <div><label>UF</label><input name="uf" maxlength="2" value="{{ e['uf'] if e else 'SP' }}"></div>
+        <div><label>Carteira <span class="muted">(quem pode ver)</span></label>
+          <select name="carteira">
+            {% for k in carteiras %}<option value="{{ k }}" {{ 'selected' if (e['carteira'] if e else carteiras[0]) == k }}>{{ k }}</option>{% endfor %}
+          </select>
+        </div>
         <div><label>WhatsApp</label><input name="whatsapp" value="{{ e['whatsapp'] if e else '' }}"></div>
         <div><label>Responsável</label><input name="responsavel" value="{{ e['responsavel'] if e else '' }}"></div>
         <div><label>E-mail</label><input name="email" value="{{ e['email'] if e else '' }}"></div>

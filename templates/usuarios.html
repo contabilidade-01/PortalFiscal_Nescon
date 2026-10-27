@@ -17,7 +17,7 @@
       <td class="mono">{{ u['login'] }}</td>
       <td class="muted" style="font-size:13px">{{ u['email'] or '—' }}</td>
       <td>{% if u['papel']=='admin' %}<span class="pill on dot">admin</span>{% else %}<span class="tag">operador</span>{% endif %}</td>
-      <td>{% if u['papel']=='admin' or u['todas_empresas'] %}<b>todas</b>{% else %}{{ cont.get(u['id'],0) }} empresa(s){% endif %}</td>
+      <td>{% if u['papel']=='admin' or u['todas_empresas'] %}<b>todas</b>{% else %}{% for k in cart.get(u['id'], []) %}<span class="tag">{{ k }}</span> {% endfor %}{% if cont.get(u['id']) or not cart.get(u['id']) %}{{ '+ ' if cart.get(u['id']) }}{{ cont.get(u['id'],0) }} empresa(s){% endif %}{% endif %}</td>
       <td>{% if u['ativo'] %}<span class="pill on dot">ativo</span>{% else %}<span class="pill off dot">inativo</span>{% endif %}</td>
       <td>
         <div class="row" style="gap:6px;flex-wrap:nowrap">

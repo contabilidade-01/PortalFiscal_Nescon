@@ -173,6 +173,25 @@ def _scope(rows):
     idset = set(ids)
     return [r for r in rows if r['id'] in idset]
 
+def _cnpjs_visiveis():
+    """Set de CNPJs no escopo do usuario logado. None = todas."""
+    if session.get('papel') == 'admin':
+        return None
+    u = usuario_atual()
+    v = models.cnpjs_visiveis(u) if u else []
+    return None if v is None else set(v)
+
+def _job_visivel(job, vis):
+    """Jobs 'todas' sao do robo: o operador restrito ve que existem, mas nao a empresa da vez."""
+    return vis is None or job['escopo'] in vis
+
+def _job_sem_empresa(job, vis):
+    d = dict(job)
+    if not _job_visivel(job, vis):
+        d['atual'] = None
+        d['mensagem'] = None
+    return d
+
 def _pode_ver_cnpj(cnpj):
     ids = _visiveis_ids()
     if ids is None:
@@ -355,8 +374,9 @@ def _resumo_ambiente(amb, emp, com_linhas=False):
         ult = {r['cnpj']: r for r in c.execute(
             '''SELECT x.* FROM execucoes x JOIN (SELECT cnpj, MAX(id) mid FROM execucoes
                WHERE tipo=? GROUP BY cnpj) u ON u.mid=x.id''', (amb['tipo_exec'],)).fetchall()}
-        ultima = c.execute('SELECT * FROM execucoes WHERE tipo=? ORDER BY id DESC LIMIT 1',
-                           (amb['tipo_exec'],)).fetchone()
+    # Ultima execucao so entre as empresas visiveis (operador nao ve as de outra carteira).
+    vis_cnpjs = {e['cnpj'] for e in emp}
+    ultima = max((r for cnpj, r in ult.items() if cnpj in vis_cnpjs), key=lambda r: r['id'], default=None)
     k = {'marcadas': len(marcadas), 'com_cert': 0, 'sem_cert': 0, 'vencidos': 0, 'docs': 0,
          'bloqueadas': 0, 'ultima': ultima, 'extras': {}, 'lista_vencidos': [], 'fora_sp': []}
     linhas, puladas = [], []
@@ -394,6 +414,7 @@ def _job_do_ambiente(amb):
     """Texto do job rodando agora, se for do motor deste ambiente (ou busca completa)."""
     rodando, _fila, _rec = worker.status()
     if rodando and rodando['tipo'] in (amb['tipo_job'], 'completo'):
+        rodando = _job_sem_empresa(rodando, _cnpjs_visiveis())
         return '%s (%s/%s)' % (rodando['atual'] or rodando['mensagem'] or 'processando',
                                rodando['feitos'] or 0, rodando['total'] or 0)
     return None
@@ -554,13 +575,38 @@ def parametros_captura():
 @login_req
 def clientes():
     q = (request.args.get('q') or '').strip()
+    cart = request.args.get('carteira', '')
     with models.con() as c:
         if q:
             emp = c.execute("SELECT * FROM empresas WHERE nome LIKE ? OR cnpj LIKE ? ORDER BY nome",
                             ('%'+q+'%', '%'+q+'%')).fetchall()
         else:
             emp = c.execute('SELECT * FROM empresas ORDER BY nome').fetchall()
-    return render_template('clientes.html', empresas=_scope(emp), q=q)
+    emp = _scope(emp)
+    tot_cart = {k: sum(1 for e in emp if e['carteira'] == k) for k in models.CARTEIRAS}
+    if cart in models.CARTEIRAS:
+        emp = [e for e in emp if e['carteira'] == cart]
+    return render_template('clientes.html', empresas=emp, q=q, carteira=cart,
+                           carteiras=models.CARTEIRAS, tot_cart=tot_cart)
+
+@app.route('/clientes/carteira', methods=['POST'])
+@admin_required
+def clientes_carteira():
+    """Move em lote para uma carteira: CNPJs colados (com ou sem pontuacao)."""
+    cart = request.form.get('carteira')
+    if cart not in models.CARTEIRAS:
+        flash('Carteira inválida.', 'erro'); return redirect(url_for('clientes'))
+    cnpjs = []
+    for tok in re.findall(r'[\d./-]{14,18}', request.form.get('cnpjs', '')):
+        d = re.sub(r'\D', '', tok)
+        if len(d) == 14 and d not in cnpjs:
+            cnpjs.append(d)
+    with models.con() as c:
+        n = sum(c.execute('UPDATE empresas SET carteira=? WHERE cnpj=?', (cart, d)).rowcount for d in cnpjs)
+    nao = len(cnpjs) - n
+    flash('%d empresa(s) movida(s) para a carteira %s.%s'
+          % (n, cart, (' %d CNPJ(s) não estão na base.' % nao) if nao else ''), 'ok' if n else 'erro')
+    return redirect(url_for('clientes', carteira=cart))
 
 @app.route('/certificados')
 @login_req
@@ -594,8 +640,10 @@ def cliente_salvar(eid):
     with models.con() as c:
         c.execute('UPDATE empresas SET emissor=?, ativo=? WHERE id=?',
                   (f.get('emissor') or '', 1 if f.get('ativo') else 0, eid))
+        if f.get('carteira'):
+            c.execute('UPDATE empresas SET carteira=? WHERE id=?', (models.carteira_valida(f['carteira']), eid))
     flash('Cliente atualizado.', 'ok')
-    return redirect(url_for('clientes', q=request.args.get('q', '')))
+    return redirect(url_for('clientes', q=request.args.get('q', ''), carteira=request.args.get('carteira', '')))
 
 def _uf_cuf(uf):
     uf = (uf or '').upper()[:2]
@@ -641,18 +689,19 @@ def cliente_novo():
             fl = _flags_ambientes(f, uf)
             c.execute('''INSERT INTO empresas(cnpj,nome,uf,cuf,whatsapp,responsavel,email,emissor,marketplace,
                          metodo_saida,puxa_nfe,puxa_nfse_prestado,puxa_nfse_tomado,puxa_nfce,ativo,obs,
-                         simples_anexo,simples_rbt12,origem,criado)
-                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                         simples_anexo,simples_rbt12,origem,criado,carteira)
+                         VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                       (cnpj, f.get('nome', ''), uf, cuf, f.get('whatsapp', ''), f.get('responsavel', ''),
                        f.get('email', ''), f.get('emissor', ''), f.get('marketplace', ''),
                        f.get('metodo_saida', 'a_verificar'), fl['puxa_nfe'],
                        fl['puxa_nfse_prestado'], fl['puxa_nfse_tomado'], fl['puxa_nfce'],
                        1 if f.get('ativo') else 0, f.get('obs', ''),
                        _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')),
-                       'manual', datetime.now().isoformat(timespec='seconds')))
+                       'manual', datetime.now().isoformat(timespec='seconds'),
+                       models.carteira_valida(f.get('carteira'))))
             models.sync_puxa_nfse(c)
         flash('Cliente cadastrado.', 'ok'); return redirect(url_for('clientes'))
-    return render_template('cliente_form.html', e=None)
+    return render_template('cliente_form.html', e=None, carteiras=models.CARTEIRAS)
 
 @app.route('/clientes/<int:eid>/editar', methods=['GET', 'POST'])
 @admin_required
@@ -668,23 +717,29 @@ def cliente_editar(eid):
         with models.con() as c:
             c.execute('''UPDATE empresas SET nome=?,uf=?,cuf=?,whatsapp=?,responsavel=?,email=?,emissor=?,
                          marketplace=?,metodo_saida=?,puxa_nfe=?,puxa_nfse_prestado=?,puxa_nfse_tomado=?,
-                         puxa_nfce=?,ativo=?,obs=?,simples_anexo=?,simples_rbt12=? WHERE id=?''',
+                         puxa_nfce=?,ativo=?,obs=?,simples_anexo=?,simples_rbt12=?,carteira=? WHERE id=?''',
                       (f.get('nome', ''), uf, cuf, f.get('whatsapp', ''), f.get('responsavel', ''),
                        f.get('email', ''), f.get('emissor', ''), f.get('marketplace', ''),
                        f.get('metodo_saida', 'a_verificar'), fl['puxa_nfe'],
                        fl['puxa_nfse_prestado'], fl['puxa_nfse_tomado'], fl['puxa_nfce'],
                        1 if f.get('ativo') else 0, f.get('obs', ''),
-                       _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')), eid))
+                       _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')),
+                       models.carteira_valida(f.get('carteira')), eid))
             models.sync_puxa_nfse(c)
         flash('Cliente atualizado.', 'ok'); return redirect(url_for('clientes'))
-    return render_template('cliente_form.html', e=e)
+    return render_template('cliente_form.html', e=e, carteiras=models.CARTEIRAS)
 
 @app.route('/clientes/<int:eid>/excluir', methods=['POST'])
-@admin_required
+@perm_required('excluir_cliente')
 def cliente_excluir(eid):
+    ids = _visiveis_ids()
+    if ids is not None and eid not in set(ids):
+        flash('Este cliente não está no seu escopo.', 'erro')
+        return redirect(url_for('clientes'))
     with models.con() as c:
         r = c.execute('SELECT nome FROM empresas WHERE id=?', (eid,)).fetchone()
         c.execute('DELETE FROM empresas WHERE id=?', (eid,))
+        c.execute('DELETE FROM usuario_empresas WHERE empresa_id=?', (eid,))
     flash('Cliente %s excluído da base. (Os XML já baixados permanecem na pasta.)' % (r['nome'] if r else eid), 'ok')
     return redirect(url_for('clientes'))
 
@@ -848,6 +903,14 @@ def execucoes():
     }
     u = usuario_atual()
     tipos_ok = [t for t, p in models.TIPO_PARA_PERM.items() if models.tem_permissao(u, p)]
+    vis = _cnpjs_visiveis()
+    if vis is not None:  # operador restrito: so as empresas dele (ex.: sem a carteira do Jean)
+        with models.con() as c:
+            execs = c.execute('SELECT * FROM execucoes WHERE cnpj IN (%s) ORDER BY id DESC LIMIT 100'
+                              % ','.join('?' * len(vis)), sorted(vis)).fetchall() if vis else []
+        jobs = [_job_sem_empresa(j, vis) for j in jobs]
+        if ultimo_auto:
+            ultimo_auto = _job_sem_empresa(ultimo_auto, vis)
     return render_template('execucoes.html', jobs=jobs, execs=execs, periodos=periodos,
                            tipo_label=TIPO_LABEL, status_label=STATUS_LABEL,
                            ultimo_auto=ultimo_auto, horas_auto=horas_auto,
@@ -874,6 +937,12 @@ def execucao_nova():
 @perm_required('ver_execucoes', 'exec_completo', 'exec_nfe_entradas',
                'exec_nfse', 'exec_nfce', 'exec_ciencia')
 def job_cancelar(jid):
+    vis = _cnpjs_visiveis()
+    if vis is not None:
+        with models.con() as c:
+            j = c.execute('SELECT escopo FROM jobs WHERE id=?', (jid,)).fetchone()
+        if not j or not _job_visivel(j, vis):
+            flash('Este job não é do seu escopo.', 'erro'); return redirect(url_for('execucoes'))
     with models.con() as c:
         r = c.execute("UPDATE jobs SET status='cancelado', terminado=? WHERE id=? AND status='fila'",
                       (datetime.now().strftime('%Y-%m-%d %H:%M:%S'), jid)).rowcount
@@ -890,6 +959,14 @@ def protocolos():
                             ORDER BY cd.quando DESC LIMIT 500''').fetchall()
         total = c.execute('SELECT COUNT(*) FROM ciencia_dada').fetchone()[0]
         com_prot = c.execute("SELECT COUNT(*) FROM ciencia_dada WHERE nProt IS NOT NULL AND nProt!=''").fetchone()[0]
+        vis = _cnpjs_visiveis()
+        if vis is not None:
+            todos = [r for r in c.execute('''SELECT cd.cnpj, cd.chNFe, cd.cStat, cd.nProt, cd.quando, e.nome
+                                             FROM ciencia_dada cd LEFT JOIN empresas e ON e.cnpj=cd.cnpj
+                                             ORDER BY cd.quando DESC''').fetchall() if r['cnpj'] in vis]
+            rows = todos[:500]
+            total = len(todos)
+            com_prot = sum(1 for r in todos if r['nProt'])
     return render_template('protocolos.html', rows=rows, total=total, com_prot=com_prot)
 
 # ---- Usuarios (admin) ----
@@ -900,7 +977,10 @@ def usuarios():
         us = c.execute('SELECT * FROM usuarios ORDER BY papel, nome').fetchall()
         cont = {r['user_id']: r['n'] for r in
                 c.execute('SELECT user_id, COUNT(*) n FROM usuario_empresas GROUP BY user_id').fetchall()}
-    return render_template('usuarios.html', usuarios=us, cont=cont)
+        cart = {}
+        for r in c.execute('SELECT user_id, carteira FROM usuario_carteiras ORDER BY carteira').fetchall():
+            cart.setdefault(r['user_id'], []).append(r['carteira'])
+    return render_template('usuarios.html', usuarios=us, cont=cont, cart=cart)
 
 @app.route('/usuarios/novo', methods=['GET', 'POST'])
 @admin_required
@@ -908,9 +988,10 @@ def usuario_novo():
     if request.method == 'POST':
         return _salvar_usuario(None)
     with models.con() as c:
-        emp = c.execute('SELECT id,cnpj,nome FROM empresas ORDER BY nome').fetchall()
+        emp = c.execute('SELECT id,cnpj,nome,carteira FROM empresas ORDER BY nome').fetchall()
     return render_template('usuario_form.html', u=None, empresas=emp, sel=set(),
-                           perms_sel=set(), catalogo=models.PERMISSOES)
+                           perms_sel=set(), catalogo=models.PERMISSOES,
+                           carteiras=models.CARTEIRAS, cart_sel=set())
 
 @app.route('/usuarios/<int:uid>/editar', methods=['GET', 'POST'])
 @admin_required
@@ -921,13 +1002,14 @@ def usuario_editar(uid):
             abort(404)
         sel = set(r['empresa_id'] for r in
                   c.execute('SELECT empresa_id FROM usuario_empresas WHERE user_id=?', (uid,)).fetchall())
-        emp = c.execute('SELECT id,cnpj,nome FROM empresas ORDER BY nome').fetchall()
+        emp = c.execute('SELECT id,cnpj,nome,carteira FROM empresas ORDER BY nome').fetchall()
         perms_sel = set(r['permissao'] for r in
                         c.execute('SELECT permissao FROM usuario_permissoes WHERE user_id=?', (uid,)).fetchall())
     if request.method == 'POST':
         return _salvar_usuario(uid)
     return render_template('usuario_form.html', u=u, empresas=emp, sel=sel,
-                           perms_sel=perms_sel, catalogo=models.PERMISSOES)
+                           perms_sel=perms_sel, catalogo=models.PERMISSOES,
+                           carteiras=models.CARTEIRAS, cart_sel=models.carteiras_do_usuario(uid))
 
 def _salvar_usuario(uid):
     f = request.form
@@ -939,6 +1021,7 @@ def _salvar_usuario(uid):
     todas = 1 if (f.get('todas_empresas') or papel == 'admin') else 0
     empresas_sel = [int(x) for x in request.form.getlist('empresas')]
     perms_sel = [x for x in request.form.getlist('permissoes') if x in models.PERM_KEYS]
+    cart_sel = request.form.getlist('carteiras')
     senha = f.get('senha') or ''
     with models.con() as c:
         if uid is None:
@@ -960,6 +1043,7 @@ def _salvar_usuario(uid):
         if not todas:
             for eid in empresas_sel:
                 c.execute('INSERT OR IGNORE INTO usuario_empresas(user_id,empresa_id) VALUES(?,?)', (uid, eid))
+    models.salvar_carteiras(uid, [] if todas else cart_sel)
     if papel == 'admin':
         models.salvar_permissoes(uid, [])  # admin ignora a tabela; limpa lixo
     else:
@@ -977,6 +1061,7 @@ def usuario_excluir(uid):
         if alvo and alvo['papel'] == 'admin' and admins <= 1:
             flash('Não é possível excluir o último administrador.', 'erro'); return redirect(url_for('usuarios'))
         c.execute('DELETE FROM usuario_empresas WHERE user_id=?', (uid,))
+        c.execute('DELETE FROM usuario_carteiras WHERE user_id=?', (uid,))
         c.execute('DELETE FROM usuario_permissoes WHERE user_id=?', (uid,))
         c.execute('DELETE FROM password_reset_tokens WHERE user_id=?', (uid,))
         c.execute('DELETE FROM usuarios WHERE id=?', (uid,))
@@ -1121,11 +1206,12 @@ def run_nfce():
 @login_req
 def status_json():
     rodando, fila, recentes = worker.status()
+    vis = _cnpjs_visiveis()
     # 'agora' vem do servidor: o tempo decorrido e calculado com as DUAS pontas no
     # relogio do servidor. Sem isso, VPS em UTC + navegador em BRT dariam "-3h".
-    return {'rodando': (dict(rodando) if rodando else None), 'fila': fila,
+    return {'rodando': (_job_sem_empresa(rodando, vis) if rodando else None), 'fila': fila,
             'agora': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'recentes': [dict(r) for r in recentes]}
+            'recentes': [_job_sem_empresa(r, vis) for r in recentes]}
 
 # mapeia tipo (do filtro) -> subpastas fisicas; None = todas
 TIPOS = {
