@@ -124,3 +124,32 @@ def test_admin_move_em_lote_e_salva_carteiras_do_usuario():
     # operador nao muda carteira
     _cli(uid).post('/clientes/carteira', data={'carteira': 'Nescon', 'cnpjs': NESCON})
     assert _carteira(NESCON) == 'Jean'
+
+
+def _existe(cnpj):
+    with models.con() as c:
+        return c.execute('SELECT 1 FROM empresas WHERE cnpj=?', (cnpj,)).fetchone() is not None
+
+
+def _id(cnpj):
+    with models.con() as c:
+        return c.execute('SELECT id FROM empresas WHERE cnpj=?', (cnpj,)).fetchone()['id']
+
+
+def test_excluir_cliente_exige_permissao():
+    uid = _setup(carteiras=['Nescon'])
+    cli = _cli(uid)
+    assert b'cliente_excluir' not in cli.get('/clientes').data and b'/excluir' not in cli.get('/clientes').data
+    cli.post('/clientes/%d/excluir' % _id(NESCON))
+    assert _existe(NESCON)
+
+
+def test_excluir_cliente_so_no_escopo():
+    uid = _setup(carteiras=['Nescon'])
+    models.salvar_permissoes(uid, ['excluir_cliente'])
+    cli = _cli(uid)
+    assert b'/excluir' in cli.get('/clientes').data
+    cli.post('/clientes/%d/excluir' % _id(JEAN))
+    assert _existe(JEAN)
+    cli.post('/clientes/%d/excluir' % _id(NESCON))
+    assert not _existe(NESCON)

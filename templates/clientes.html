@@ -61,10 +61,12 @@
       <td>
         <div class="rowform" style="gap:6px;flex-wrap:nowrap">
           <a href="{{ url_for('cliente_editar', eid=e['id']) }}" class="btn btn-ghost sm" title="Editar cadastro">Editar</a>
+          {% if tem_perm('excluir_cliente') %}
           <form method="post" action="{{ url_for('cliente_excluir', eid=e['id']) }}" style="margin:0"
                 onsubmit="return confirm('Excluir este cliente da base? Esta ação não pode ser desfeita.');">
             <button class="btn sm" style="background:var(--errbg);color:var(--err)" title="Excluir da base">Excluir</button>
           </form>
+          {% endif %}
         </div>
       </td>
     </tr>

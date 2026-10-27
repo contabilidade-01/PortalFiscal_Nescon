@@ -730,11 +730,16 @@ def cliente_editar(eid):
     return render_template('cliente_form.html', e=e, carteiras=models.CARTEIRAS)
 
 @app.route('/clientes/<int:eid>/excluir', methods=['POST'])
-@admin_required
+@perm_required('excluir_cliente')
 def cliente_excluir(eid):
+    ids = _visiveis_ids()
+    if ids is not None and eid not in set(ids):
+        flash('Este cliente não está no seu escopo.', 'erro')
+        return redirect(url_for('clientes'))
     with models.con() as c:
         r = c.execute('SELECT nome FROM empresas WHERE id=?', (eid,)).fetchone()
         c.execute('DELETE FROM empresas WHERE id=?', (eid,))
+        c.execute('DELETE FROM usuario_empresas WHERE empresa_id=?', (eid,))
     flash('Cliente %s excluído da base. (Os XML já baixados permanecem na pasta.)' % (r['nome'] if r else eid), 'ok')
     return redirect(url_for('clientes'))
 

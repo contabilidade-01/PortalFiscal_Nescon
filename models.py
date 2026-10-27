@@ -25,6 +25,7 @@ PERMISSOES = [
     ('download', 'Baixar XML por competência'),
     ('vincular_certificado', 'Vincular certificado digital (só empresas do escopo)'),
     ('parametros_captura', 'Marcar parâmetros de captura (só empresas do escopo)'),
+    ('excluir_cliente', 'Excluir cadastro de cliente (só empresas do escopo)'),
 ]
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 
