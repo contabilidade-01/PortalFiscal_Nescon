@@ -23,10 +23,14 @@
       <form method="get" class="rowform" style="margin:0"><input name="q" value="{{ q }}" placeholder="buscar nome/CNPJ" class="mini" style="width:180px"><button class="btn btn-ghost sm">Buscar</button></form>
     </div>
   </div>
+  <div class="rowform" style="margin:-4px 0 12px;gap:6px">
+    <a href="{{ url_for('clientes', q=q) }}" class="btn sm {{ 'btn-primary' if not carteira else 'btn-ghost' }}">Todas</a>
+    {% for k in carteiras %}<a href="{{ url_for('clientes', q=q, carteira=k) }}" class="btn sm {{ 'btn-primary' if carteira==k else 'btn-ghost' }}">{{ k }} <span class="tag">{{ tot_cart[k] }}</span></a>{% endfor %}
+  </div>
   <p class="desc" style="margin-top:-6px">Os ambientes de captura de cada cliente são marcados em {% if tem_perm('parametros_captura') %}<a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>{% else %}Parâmetros de captura (admin){% endif %} ou no Editar. Aqui: emissor e ativo (o tick de ativo salva na hora).</p>
   <div class="tbl-wrap">
   <table style="min-width:900px">
-    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Ambientes</th><th>Emissor · Ativo</th><th>Ações</th></tr></thead>
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Ambientes</th><th>Carteira · Emissor · Ativo</th><th>Ações</th></tr></thead>
     <tbody>
     {% for e in empresas %}
     <tr>
@@ -43,7 +47,12 @@
         {% if not (e['puxa_nfe'] or e['puxa_nfse_prestado'] or e['puxa_nfse_tomado'] or e['puxa_nfce']) %}<span class="muted">nenhum</span>{% endif %}
       </div></td>
       <td>
-        <form method="post" action="{{ url_for('cliente_salvar', eid=e['id']) }}?q={{ q }}" class="rowform">
+        <form method="post" action="{{ url_for('cliente_salvar', eid=e['id'], q=q, carteira=carteira) }}" class="rowform">
+          {% if papel_atual == 'admin' %}
+          <select name="carteira" class="mini" onchange="this.form.submit()" title="Carteira (quem pode ver)">
+            {% for k in carteiras %}<option value="{{ k }}" {{ 'selected' if e['carteira']==k }}>{{ k }}</option>{% endfor %}
+          </select>
+          {% else %}<span class="tag">{{ e['carteira'] }}</span>{% endif %}
           <input name="emissor" value="{{ e['emissor'] or '' }}" placeholder="emissor (Bling...)" class="mini" style="width:130px">
           <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if e['ativo'] }} onchange="this.form.submit()"> ativo</label>
           <button class="btn btn-ghost sm">Salvar</button>
@@ -65,4 +74,18 @@
   </table>
   </div>
 </div>
+
+{% if papel_atual == 'admin' %}
+<div class="card">
+  <h2 style="margin-top:0">Mover para carteira (em lote)</h2>
+  <p class="desc">Cole os CNPJs (com ou sem pontuação, um por linha ou copiados da planilha). Só muda quem pode ver; o robô continua rodando para todas as empresas.</p>
+  <form method="post" action="{{ url_for('clientes_carteira') }}">
+    <textarea name="cnpjs" rows="5" style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2);color:var(--txt);font-family:ui-monospace,Consolas,monospace;font-size:13px" placeholder="11.222.333/0001-81&#10;44555666000199"></textarea>
+    <div class="rowform" style="margin-top:10px">
+      <select name="carteira" class="mini">{% for k in carteiras %}<option value="{{ k }}" {{ 'selected' if k == carteira }}>{{ k }}</option>{% endfor %}</select>
+      <button class="btn btn-primary sm">Mover</button>
+    </div>
+  </form>
+</div>
+{% endif %}
 {% endblock %}
