@@ -32,7 +32,7 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
   'erro_rede': ('Erro de rede','er'), 'erro_cert': ('Erro no certificado','er'), 'reset': ('Rebaixar histórico','nt'),
   'cert_vencido': ('Certificado vencido','er'), 'http_403': ('Certificado recusado (403)','er'),
   'cStat_104': ('Período fora dos 100 dias','er'), 'sem_chaves': ('Sem chaves na fila','nt'),
-  'nao_encontrada': ('Não localizada','wr')
+  'nao_encontrada': ('Não localizada','wr'), 'importado': ('XML importado','ok')
 } %}
 {# parada pode vir com detalhe ('erro_rede:...', 'http_503', 'cStat_215'): rotula pelo prefixo #}
 {% macro rot(parada) -%}
@@ -126,6 +126,29 @@ td.num{font-variant-numeric:tabular-nums;font-weight:700}
     <label>Chaves (cole aqui)</label>
     <textarea name="chaves" rows="4" style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2);color:var(--txt);font-family:ui-monospace,Consolas,monospace;font-size:13px" placeholder="35260952747415000127550010000000051300000054&#10;35260852747415000127550010000000041300000045"></textarea>
     <button class="btn btn-primary" style="margin-top:12px">Enfileirar e baixar</button>
+  </form>
+</div>
+{% endif %}
+
+{% if emp_import and tem_perm('importar_xml') %}
+<div class="card" style="border-color:color-mix(in srgb,var(--ac) 30%,var(--line))">
+  <h2>Importar XML de vendas</h2>
+  <p class="desc">Para quando a SEFAZ não entrega as notas ao portal — por exemplo, <b>NFC-e de empresa fora de SP</b>
+    (só a SEFAZ-SP oferece a busca automática). Exporte os XML do emissor/PDV do cliente e envie aqui o
+    <b>.zip</b> ou os <b>.xml</b>. Aceita NF-e (55) e NFC-e (65) <b>emitidas pela própria empresa e autorizadas</b>;
+    cada nota vai para o mês dela. Eventos de cancelamento no mesmo envio tiram a nota do faturamento.</p>
+  <form method="post" action="{{ url_for('ambiente_importar', chave=amb.chave) }}" enctype="multipart/form-data">
+    <div class="row" style="align-items:flex-end">
+      <div style="min-width:280px">
+        <label>Empresa (emitente)</label>
+        <select name="cnpj" required>
+          <option value="">Selecione…</option>
+          {% for e in emp_import %}<option value="{{ e['cnpj'] }}">{{ e['nome']|title }} — {{ e['cnpj'] }}{% if e['uf'] %} · {{ e['uf'] }}{% endif %}</option>{% endfor %}
+        </select>
+      </div>
+      <div><label>Arquivos (.zip ou .xml)</label><input type="file" name="arquivos" accept=".zip,.xml" multiple required></div>
+    </div>
+    <button class="btn btn-primary" style="margin-top:12px">Importar</button>
   </form>
 </div>
 {% endif %}
