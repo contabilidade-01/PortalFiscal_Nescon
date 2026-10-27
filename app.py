@@ -3,7 +3,7 @@
    Abas NFe/NFSe, flags por cliente (puxa_nfe/puxa_nfse) e metodo de saida.
    Roda local; pronto para servidor. Preserva PuxadorNFe_Web e PORTAL NACIONAL NFSE.
 """
-import os, io, re, json, zipfile, threading
+import os, io, re, json, zipfile, threading, secrets
 from functools import wraps
 from datetime import datetime, timedelta
 from flask import (Flask, request, redirect, url_for, session, flash,
@@ -980,21 +980,40 @@ def usuario_excluir(uid):
 
 # ---- Certificados ----
 @app.route('/cert/upload', methods=['POST'])
-@admin_required
+@perm_required('vincular_certificado')
 def cert_upload():
     fobj = request.files.get('cert'); senha = request.form.get('senha', '')
     if not fobj or not fobj.filename:
         flash('Selecione um .pfx', 'erro'); return redirect(url_for('certificados'))
-    dest = os.path.join(CERT_DIR, secure_filename(fobj.filename)); fobj.save(dest)
+    # Salva num temporario e so grava o nome definitivo depois de validar o CNPJ e o
+    # escopo: um operador nao pode sobrescrever o .pfx de empresa que nao enxerga, e
+    # dois clientes com o mesmo nome de arquivo (ex.: "certificado.pfx") nao colidem.
+    tmp = os.path.join(CERT_DIR, '.upload_%s.tmp' % secrets.token_hex(8)); fobj.save(tmp)
     try:
-        _, cert, _ = certs.load_pfx(dest, senha)
+        _, cert, _ = certs.load_pfx(tmp, senha)
         cnpj, tipo, nome, uf, val = certs.cert_info(cert)
     except Exception as e:
+        os.remove(tmp)
         flash('Certificado inválido: %s' % str(e)[:50], 'erro'); return redirect(url_for('certificados'))
     if tipo != 'CNPJ':
+        os.remove(tmp)
         flash('Não é e-CNPJ.', 'erro'); return redirect(url_for('certificados'))
     with models.con() as c:
         ex = c.execute('SELECT id FROM empresas WHERE cnpj=?', (cnpj,)).fetchone()
+    admin = session.get('papel') == 'admin'
+    if not ex and not admin:
+        os.remove(tmp)
+        flash('CNPJ %s não está cadastrado. Peça ao administrador para cadastrar a empresa.' % cnpj, 'erro')
+        return redirect(url_for('certificados'))
+    if ex and not _pode_ver_cnpj(cnpj):
+        os.remove(tmp)
+        flash('A empresa do certificado (%s) não está no seu escopo.' % cnpj, 'erro')
+        return redirect(url_for('certificados'))
+    nome_arq = secure_filename(fobj.filename) or 'certificado.pfx'
+    if not nome_arq.startswith(cnpj):
+        nome_arq = '%s_%s' % (cnpj, nome_arq)
+    dest = os.path.join(CERT_DIR, nome_arq); os.replace(tmp, dest)
+    with models.con() as c:
         if ex:
             c.execute('UPDATE empresas SET arquivo=?,senha=?,senha_ok=1,validade=?,uf=?,cuf=? WHERE id=?',
                       (dest, senha, val, uf, certs.UF_COD.get(uf, '35'), ex['id']))

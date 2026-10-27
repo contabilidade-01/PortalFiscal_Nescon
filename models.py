@@ -23,6 +23,7 @@ PERMISSOES = [
     ('ver_protocolos', 'Ver Protocolos da Ciência'),
     ('ver_analises', 'Análises fiscais (conferência, faturamento…)'),
     ('download', 'Baixar XML por competência'),
+    ('vincular_certificado', 'Vincular certificado digital (só empresas do escopo)'),
 ]
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 TIPO_PARA_PERM = {
