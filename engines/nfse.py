@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Motor NFSe - Portal Nacional (ADN). Baseado no projeto recuperado
-   (CentralNFSeNacional): GET {base}/contribuintes/DFe/{nsu} com mTLS (mesmo A1),
+   (CentralNFSeNacional): GET {base}/contribuintes/DFe/{nsu}?cnpjConsulta=&lote=true com mTLS (mesmo A1),
    payload JSON com arquivo XML em base64+gzip; 404 = fim, 429 = rate limit.
 """
 import os, re, json, time, base64, gzip
@@ -41,6 +41,30 @@ def _extrair_docs(payload):
         out.append((int(nsu) if nsu else 0, xml))
     return out
 
+def _params(cnpj):
+    """Query string exigida pela API oficial de distribuicao do ADN
+    (GET /contribuintes/DFe/{NSU}?cnpjConsulta=..&lote=true). Sem ela o ADN
+    passou a responder HTTP 400 para todas as empresas."""
+    return {'cnpjConsulta': re.sub(r'\D', '', cnpj or ''), 'lote': 'true'}
+
+def _motivo_erro(r):
+    """Resumo do corpo de erro do ADN (StatusProcessamento + Erros[Codigo/Descricao])
+    para gravar no historico; antes o corpo era descartado e so sobrava 'HTTP 400'."""
+    try:
+        j = r.json()
+    except ValueError:
+        return (r.text or '').strip()[:200]
+    if not isinstance(j, dict):
+        return str(j)[:200]
+    partes = []
+    st = j.get('StatusProcessamento')
+    if st: partes.append(str(st))
+    for e in (j.get('Erros') or j.get('erros') or []):
+        if isinstance(e, dict):
+            partes.append('%s %s' % (e.get('Codigo') or e.get('codigo') or '',
+                                     e.get('Descricao') or e.get('descricao') or ''))
+    return ' | '.join(p.strip() for p in partes if p and p.strip())[:200] or str(j)[:200]
+
 def sub_nfse(xml, cnpj):
     """Classifica a NFSe para a empresa: 02_prestado (saida, empresa=prestador)
     ou 01_tomado (entrada, empresa=tomador)."""
@@ -75,13 +99,13 @@ def puxar_nfse(emp):
     except Exception as e:
         return 0, 'erro_cert:%s' % str(e)[:40]
     sess = requests.Session(); cert = (leaf, keyf)
-    ult = int(emp['ultnsu_nfse'] or 0); total = 0; rounds = 0; parada = 'cap'
+    ult = int(emp['ultnsu_nfse'] or 0); total = 0; rounds = 0; parada = 'cap'; erro = ''
     try:
         while rounds < NFSE['max_rounds_por_empresa']:
             rounds += 1
             url = '%s/contribuintes/DFe/%d' % (BASE_URL, ult)
             try:
-                r = sess.get(url, cert=cert, timeout=NFSE['timeout_seg'])
+                r = sess.get(url, params=_params(cnpj), cert=cert, timeout=NFSE['timeout_seg'])
             except requests.RequestException as e:
                 parada = 'erro_rede:%s' % str(e)[:30]; break
             if r.status_code == 404: parada = 'fim'; break
@@ -93,7 +117,8 @@ def puxar_nfse(emp):
                     break
                 time.sleep(extra)
                 continue
-            if r.status_code != 200: parada = 'http_%d' % r.status_code; break
+            if r.status_code != 200:
+                parada = 'http_%d' % r.status_code; erro = _motivo_erro(r); break
             try: payload = r.json()
             except ValueError: parada = 'resposta_invalida'; break
             docs = _extrair_docs(payload)
@@ -112,7 +137,7 @@ def puxar_nfse(emp):
         c.execute('UPDATE empresas SET ultnsu_nfse=?, ultima_exec_nfse=?, total_nfse=total_nfse+? WHERE id=?',
                   (str(ult), datetime.now().strftime('%Y-%m-%d %H:%M'), total, emp['id']))
         c.execute('INSERT INTO execucoes(tipo,cnpj,nome,quando,docs,parada,detalhe) VALUES(?,?,?,?,?,?,?)',
-                  ('nfse', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada, 'ultNSU=%s' % ult))
+                  ('nfse', cnpj, emp['nome'], datetime.now().strftime('%Y-%m-%d %H:%M'), total, parada, ('ultNSU=%s' % ult) + (' · ' + erro if erro else '')))
     if parada == '429':
         guard.registrar_bloqueio(cnpj, 'nfse', '429', nome=emp['nome'])
     elif parada in ('fim', 'cap') or total:
