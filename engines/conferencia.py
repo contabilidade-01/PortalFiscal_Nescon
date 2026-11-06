@@ -119,9 +119,13 @@ def parse_nfse(texto):
     serie = _campo(texto, 'serie') or '0'
     data = (_campo(texto, 'dhEmi') or _campo(texto, 'DataEmissao')
             or _campo(texto, 'dhProc') or _campo(texto, 'competencia') or '')
-    valor = (_campo_n(texto, 'vLiq') or _campo_n(texto, 'vServ') or
-             _campo_n(texto, 'valorServicos') or _campo_n(texto, 'valorLiquido') or
-             _campo_n(texto, 'vNF') or _campo_n(texto, 'valor'))
+    # Valor BRUTO do servico (antes de retencoes/deducoes):
+    #   NFS-e Nacional (ADN): DPS/valores/vServPrest/vServ  (vLiq = liquido, so fallback)
+    #   ABRASF/municipais:    ValorServicos                 (ValorLiquidoNfse = liquido)
+    valor = (_campo_n(texto, 'vServ') or _campo_n(texto, 'valorServicos') or
+             _campo_n(texto, 'vNF') or
+             _campo_n(texto, 'vLiq') or _campo_n(texto, 'valorLiquidoNfse') or
+             _campo_n(texto, 'valorLiquido') or _campo_n(texto, 'valor'))
     return {
         'modelo': 'nfse',
         'serie': serie,
