@@ -28,6 +28,13 @@ class Falso:
     """Cliente da API em memoria. `erros` = excecoes a levantar no proximo enviar()."""
     def __init__(self):
         self.enviados, self.erros, self.lotes = [], [], {}
+        self.ativacoes, self.erro_ativar = [], None
+
+    def ativar_chave(self, chave):
+        if self.erro_ativar:
+            raise self.erro_ativar
+        self.ativacoes.append(chave)
+        return 'envio:' + chave
 
     def enviar(self, conteudo, nome, chave):
         if self.erros:
@@ -95,7 +102,8 @@ def test_chave_fica_cifrada(base):
 def test_envio_e_confirmacao(base):
     fila.varrer(); cli = Falso()
     assert fila.processar(10, cliente=cli) == 2
-    assert {e[1] for e in cli.enviados} == {'chave-onvio-a'}
+    assert {e[1] for e in cli.enviados} == {'envio:chave-onvio-a'}  # chave trocada em activation/enable
+    assert cli.ativacoes == ['chave-onvio-a']  # uma unica ativacao para as 2 notas
     assert all(r['estado'] == 'ENVIADO' for r in _linhas().values())
     with models.con() as c:
         c.execute("UPDATE dominio_envios SET proximo=NULL")
@@ -251,6 +259,7 @@ def test_cliente_http_envio():
     cli = api.DominioClient(_cfg(versao='v3'), session=s)
     assert cli.enviar(b'<x/>', 'a.xml', 'K') == 'B1'
     tok = s.chamadas[0]
+    assert tok[2]['data']['audience'] == api.AUDIENCE_ONVIO
     assert tok[2]['data']['grant_type'] == 'client_credentials' and tok[2]['headers']['Authorization'].startswith('Basic ')
     metodo, url, kw = s.chamadas[1]
     assert url.endswith('/dominio/invoice/v3/batches')
@@ -275,3 +284,48 @@ def test_cliente_http_erros(resp, exc):
 def test_sem_credenciais_pausa():
     with pytest.raises(api.DominioPausar):
         api.DominioClient(_cfg(client_id='', client_secret=''), session=_Sessao([])).token()
+
+
+def test_chave_de_envio_e_guardada_e_reusada(base):
+    fila.varrer(); cli = Falso()
+    fila.processar(1, cliente=cli)
+    with models.con() as c:
+        v = c.execute('SELECT chave_envio_cifrada FROM dominio_empresa WHERE cnpj=?', (CNPJ,)).fetchone()[0]
+    assert v and fila.decifrar(v) == 'envio:chave-onvio-a'
+    cli2 = Falso()  # novo processo: nao ativa de novo
+    fila.processar(5, cliente=cli2)
+    assert cli2.ativacoes == [] and {e[1] for e in cli2.enviados} == {'envio:chave-onvio-a'}
+
+
+def test_trocar_chave_refaz_ativacao(base):
+    fila.varrer(); fila.processar(1, cliente=Falso())
+    fila.salvar_empresa(CNPJ, chave='chave-nova')
+    cli = Falso(); fila.processar(5, cliente=cli)
+    assert cli.ativacoes == ['chave-nova']
+
+
+def test_ativacao_recusada_pausa_empresa(base):
+    fila.varrer(); cli = Falso(); cli.erro_ativar = api.DominioRecusado('chave invalida', 400)
+    fila.processar(5, cliente=cli)
+    assert {r['estado'] for r in _linhas().values()} == {'PAUSADO'} and not cli.enviados
+    assert 'não ativou a chave' in next(iter(_linhas().values()))['mensagem']
+
+
+def test_sem_ativacao_envia_chave_do_cliente(base, monkeypatch):
+    monkeypatch.setenv('DOMINIO_ATIVAR_CHAVE', '0')
+    fila.varrer(); cli = Falso(); fila.processar(5, cliente=cli)
+    assert cli.ativacoes == [] and {e[1] for e in cli.enviados} == {'chave-onvio-a'}
+
+
+def test_audience_padrao_e_desligavel(monkeypatch):
+    monkeypatch.delenv('DOMINIO_AUDIENCE', raising=False)
+    assert api.config()['audience'] == api.AUDIENCE_ONVIO
+    monkeypatch.setenv('DOMINIO_AUDIENCE', '-')
+    assert api.config()['audience'] == ''
+
+
+def test_ativacao_http():
+    s = _Sessao([_Resp(200, {'access_token': 'T'}), _Resp(200, {'integrationKey': 'K2'})])
+    assert api.DominioClient(_cfg(), session=s).ativar_chave('K1') == 'K2'
+    metodo, url, kw = s.chamadas[1]
+    assert url.endswith('/dominio/integration/v1/activation/enable') and kw['headers']['x-integration-key'] == 'K1'
