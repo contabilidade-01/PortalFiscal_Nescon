@@ -11,7 +11,7 @@ Regras (herdadas do EXE CentralNFSe, que ja fazia isto pelo gateway):
   - 401/403 = PAUSADO para a empresa; 429/5xx = REPETIR com espera crescente.
 Ligado so com DOMINIO_ENVIO_ATIVO=1 (env) + chave "Envio ligado" na tela.
 """
-import base64, hashlib, os, random, re, threading, time
+import base64, hashlib, os, random, re, threading, time, uuid
 from datetime import datetime, timedelta
 
 import models
@@ -328,8 +328,172 @@ def _pendentes(limite):
             LIMIT ?""", (agora_s, limite)).fetchall()
 
 
-def processar(limite=5, cliente=None):
+# ---------------------------------------------------------------- modo de conexao
+MODOS = {'gateway': 'Gateway do sistema (código de ativação)', 'direto': 'API direta (Client ID/Secret)'}
+
+
+def modo():
+    """'gateway' = servidor do fornecedor, como no EXE (padrao); 'direto' = API Onvio com Client ID."""
+    m = models.get_param('dominio_modo') or 'gateway'
+    return m if m in MODOS else 'gateway'
+
+
+def _gw():
+    from engines import dominio_gateway
+    return dominio_gateway
+
+
+def _chave_cliente(cnpj, cache):
+    """Chave do contador (sem troca): no modo gateway quem ativa na Dominio e o gateway."""
+    if cnpj not in cache:
+        with models.con() as c:
+            r = c.execute('SELECT chave_cifrada FROM dominio_empresa WHERE cnpj=? AND ativo=1', (cnpj,)).fetchone()
+        try:
+            cache[cnpj] = decifrar(r['chave_cifrada']) if r and r['chave_cifrada'] else ''
+        except api.DominioErro as e:
+            cache[cnpj] = e
+    v = cache[cnpj]
+    if isinstance(v, Exception):
+        raise v
+    if not v:
+        raise api.DominioPausar('Cadastre a chave Domínio desta empresa.')
+    return v
+
+
+ESTADO_GW = {'CONFIRMADO': 'CONFIRMADO', 'JA_EXISTENTE': 'JA_EXISTENTE', 'REJEITADO': 'RECUSADO',
+             'INDETERMINADO': 'INCERTO'}
+MSG_GW = {'REJEITADO': 'Domínio recusou o XML. Confira o documento e o código retornado.',
+          'INDETERMINADO': 'Recebimento incerto na Domínio. Confira no destino; o sistema não reenviará '
+                           'automaticamente.'}
+
+
+def _aplicar_gw(eid, rid, res, tentativas=1):
+    """Resultado do gateway -> estado da fila (mesma regra do apply_result do EXE)."""
+    if res.get('request_id') != rid:
+        raise api.DominioRepetir('Identificação divergente no gateway. A operação original foi preservada.')
+    st = res['status']
+    kw = {'codigo': ','.join(str(x) for x in (res.get('remote_codes') or []))[:80], 'mensagem': ''}
+    if res.get('reference'):
+        kw['protocolo'] = str(res['reference'])[:255]
+    if st in ESTADO_GW:
+        kw.update(estado=ESTADO_GW[st], proximo=None, ack_pendente=1, mensagem=MSG_GW.get(st, ''))
+    elif st == 'FALHA_TRANSITORIA':
+        if res.get('retryable'):
+            minimo = max(30, int(res.get('next_attempt_at') or 0) - int(time.time()))
+            kw.update(estado='REPETIR', proximo=_depois(_espera(tentativas, minimo)),
+                      mensagem='Destino temporariamente indisponível. Nova tentativa agendada.')
+        else:
+            kw.update(estado='PAUSADO', proximo=None,
+                      mensagem='Gateway pausou esta operação. Solicite liberação ao suporte; não gere outro envio.')
+    else:  # RECEBIDO / AGUARDANDO_DOMINIO
+        kw.update(estado='ENVIADO', proximo=_depois(30 + random.randint(1, 10)))
+    with models.con() as c:
+        if kw.get('estado') == 'ENVIADO':
+            c.execute('UPDATE dominio_envios SET enviado_em=COALESCE(enviado_em, ?) WHERE id=?', (agora(), eid))
+        _atualizar(c, eid, **kw)
+
+
+def _processar_gateway(limite, gw=None):
+    G = _gw()
+    gw = gw or G.cliente()  # sem ativacao: DominioPausar sobe e nenhuma linha e tocada
+    inst = G.instalacao()['installation_id']
+    chaves, feitos = {}, 0
+    for d in _pendentes(limite):
+        with models.con() as c:
+            if not c.execute("UPDATE dominio_envios SET estado='ENVIANDO', tentativas=tentativas+1, atualizado=? "
+                             "WHERE id=? AND estado=?", (agora(), d['id'], d['estado'])).rowcount:
+                continue
+        feitos += 1
+        tent = d['tentativas'] + 1
+        try:
+            chave = _chave_cliente(d['cnpj'], chaves)
+            with open(d['caminho'], 'rb') as f:
+                conteudo = f.read()
+            if not 0 < len(conteudo) <= G.LIMITE_BYTES:
+                raise api.DominioRecusado('XML vazio ou acima do limite de 2 MB do gateway.')
+            h = hashlib.sha256(conteudo).hexdigest()
+            if d['hash'] and d['hash'] != h:
+                raise api.DominioRecusado('XML alterado após iniciar o envio. Confira a operação existente '
+                                          'antes de reenviar.')
+            cnpj = re.sub('[^A-Z0-9]', '', d['cnpj'].upper())
+            rid, idem = d['lote_id'], d['idem_key']
+            if not rid:  # identidade da operacao: a mesma do EXE
+                rid = hashlib.sha256(('%s|%s|%s' % (inst, cnpj, h)).encode()).hexdigest()
+                idem = idem or str(uuid.uuid4())
+                with models.con() as c:
+                    _atualizar(c, d['id'], hash=h, lote_id=rid, idem_key=idem)
+            res = gw.status(rid, cnpj, chave) if d['iniciado'] else None
+            if res is None:
+                with models.con() as c:
+                    _atualizar(c, d['id'], iniciado=1)
+                res = gw.send(conteudo, cnpj, chave, idem)
+            elif (res['status'] == 'FALHA_TRANSITORIA' and res.get('retryable')
+                  and int(res.get('next_attempt_at') or 0) <= time.time()):
+                res = gw.send(conteudo, cnpj, chave, idem)
+            _aplicar_gw(d['id'], rid, res, tent)
+        except FileNotFoundError:
+            with models.con() as c:
+                _atualizar(c, d['id'], estado='RECUSADO', proximo=None,
+                           mensagem='Não foi possível ler o XML original. Confira o arquivo local.')
+        except api.DominioPausar as e:
+            with models.con() as c:
+                _atualizar(c, d['id'], estado='PAUSADO', codigo=e.codigo, mensagem=str(e), proximo=None)
+            chaves[d['cnpj']] = e
+        except api.DominioRepetir as e:
+            with models.con() as c:
+                _atualizar(c, d['id'], estado='REPETIR', codigo=e.codigo, mensagem=str(e),
+                           proximo=_depois(_espera(tent, e.espera)))
+        except api.DominioErro as e:
+            with models.con() as c:
+                _atualizar(c, d['id'], estado='RECUSADO', codigo=e.codigo, mensagem=str(e), proximo=None)
+        except Exception as e:  # mesma operacao (request_id/idempotencia) sera recuperada
+            with models.con() as c:
+                _atualizar(c, d['id'], estado='REPETIR', proximo=_depois(_espera(tent)),
+                           mensagem='Execução interrompida (%s). A mesma operação será recuperada com segurança.'
+                                    % type(e).__name__)
+    return feitos
+
+
+def _consultar_gateway(limite=100, gw=None):
+    """Le resultados em lote (nunca reenvia), pede acompanhamento e confirma os finais."""
+    gw = gw or _gw().cliente()
+    with models.con() as c:
+        rows = c.execute("SELECT * FROM dominio_envios WHERE estado='ENVIADO' AND lote_id IS NOT NULL "
+                         'AND (proximo IS NULL OR proximo<=?) ORDER BY proximo, id LIMIT ?',
+                         (agora(), limite)).fetchall()
+    por_id = {r['lote_id']: r for r in rows}
+    if por_id:
+        res = gw.batch_status(list(por_id))
+        for it in res['items']:
+            _aplicar_gw(por_id[it['request_id']]['id'], it['request_id'], it)
+        with models.con() as c:
+            for rid in res.get('missing', []):
+                _atualizar(c, por_id[rid]['id'], estado='INCERTO', proximo=None,
+                           mensagem='Lote já recebido, mas operação indisponível no gateway. Confira antes de reenviar.')
+        chaves = {}
+        for it in [i for i in res['items'] if i['status'] == 'AGUARDANDO_DOMINIO'
+                   and not i.get('background_tracking')][:2]:
+            d = por_id[it['request_id']]
+            try:
+                gw.track_existing(it['request_id'], d['cnpj'], _chave_cliente(d['cnpj'], chaves))
+            except api.DominioErro:
+                pass
+    with models.con() as c:
+        pend = [r['lote_id'] for r in c.execute(
+            'SELECT lote_id FROM dominio_envios WHERE ack_pendente=1 AND lote_id IS NOT NULL LIMIT 100')]
+    if pend:
+        resp = gw.acknowledge(pend)
+        aceitos = {i.get('request_id') for i in (resp.get('items') or []) if isinstance(i, dict)}
+        with models.con() as c:
+            for rid in aceitos & set(pend):
+                c.execute('UPDATE dominio_envios SET ack_pendente=0 WHERE lote_id=?', (rid,))
+    return len(rows)
+
+
+def processar(limite=5, cliente=None, gateway=None):
     """Envia ate `limite` XMLs. Retorna quantos foram tentados."""
+    if gateway is not None or (cliente is None and modo() == 'gateway'):
+        return _processar_gateway(limite, gateway)
     cli = cliente or api.cliente()
     chaves, feitos = {}, 0
     for d in _pendentes(limite):
@@ -378,8 +542,10 @@ def processar(limite=5, cliente=None):
     return feitos
 
 
-def consultar(limite=20, cliente=None):
+def consultar(limite=20, cliente=None, gateway=None):
     """Consulta lotes ENVIADO cujo horario chegou."""
+    if gateway is not None or (cliente is None and modo() == 'gateway'):
+        return _consultar_gateway(100, gateway)
     cli = cliente or api.cliente()
     chaves, n = {}, 0
     with models.con() as c:
@@ -432,9 +598,33 @@ def pedir_reenvio(eid, conferido=False):
             raise ValueError('Confira na Domínio que o arquivo não chegou e marque a confirmação.')
         if d['estado'] == 'FORA_PERIODO':
             raise ValueError('Documento anterior à data inicial da empresa.')
+        if d['iniciado'] and d['lote_id']:  # operacao do gateway: o reenvio precisa ser liberado la
+            if d['protocolo']:
+                raise ValueError('O gateway já tem protocolo deste documento. Confira o resultado antes de '
+                                 'outro envio.')
+            _reenvio_gateway(d)
+            return
         # Reenvio manual cria um lote novo: o hash zera para aceitar XML corrigido.
         _atualizar(c, eid, estado='REPETIR', proximo=agora(), mensagem='Reenvio pedido manualmente.',
                    hash=None, lote_id=None, codigo='', tentativas=0)
+
+
+def _reenvio_gateway(d, gw=None):
+    """POST /envios/{id}/retentativas (como request_manual_retry do EXE). Mantem a mesma operacao."""
+    try:
+        res = (gw or _gw().cliente()).authorize_retry(d['lote_id'], str(uuid.uuid4()))
+    except api.DominioErro as e:
+        raise ValueError('Gateway não liberou o reenvio: %s' % e) from None
+    with models.con() as c:
+        if res is not None and res['status'] == 'FALHA_TRANSITORIA' and res.get('reference'):
+            _atualizar(c, d['id'], estado='INCERTO', protocolo=str(res['reference'])[:255], proximo=None,
+                       mensagem='O gateway já possui um protocolo. Confira o resultado antes de outro envio.')
+            return
+        if res is None or res['status'] == 'FALHA_TRANSITORIA':
+            _atualizar(c, d['id'], estado='REPETIR', proximo=agora(), tentativas=0,
+                       mensagem='Reenvio liberado no gateway.')
+            return
+    _aplicar_gw(d['id'], d['lote_id'], res)
 
 
 # ---------------------------------------------------------------- resumo p/ tela
@@ -462,8 +652,14 @@ def ciclo():
     if not _ultimo['varredura'] or time.time() - _ultimo['varredura'] > 300:
         varrer()
         _ultimo['varredura'] = time.time()
-    processar(int(os.environ.get('DOMINIO_LOTE_CICLO', '5')))
-    consultar()
+    if modo() == 'gateway':  # como o EXE: 1 XML por volta e resultados a cada 30 s
+        processar(1)
+        if not _ultimo.get('consulta') or time.time() - _ultimo['consulta'] > 30:
+            _ultimo['consulta'] = time.time()
+            consultar()
+    else:
+        processar(int(os.environ.get('DOMINIO_LOTE_CICLO', '5')))
+        consultar()
     _ultimo['ciclo'] = agora()
 
 
@@ -475,7 +671,8 @@ def _loop():
                 _ultimo['erro'] = ''
         except Exception as e:
             _ultimo['erro'] = '%s: %s' % (type(e).__name__, str(e)[:150])
-        time.sleep(float(os.environ.get('DOMINIO_INTERVALO_SEG', '15')))
+        padrao = 4 if modo() == 'gateway' else 15
+        time.sleep(float(os.environ.get('DOMINIO_INTERVALO_SEG') or padrao))
 
 
 def iniciar():

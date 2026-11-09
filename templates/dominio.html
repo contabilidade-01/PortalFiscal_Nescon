@@ -35,12 +35,17 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
   <h2>Envio de XML para a Domínio</h2>
   <div class="dm-status">
     {% if simulado %}<span class="tag bad">SIMULADOR — nada é enviado à Domínio</span>{% endif %}
+    <span class="tag">Conexão: {{ modos[modo] }}</span>
+    {% if modo == 'gateway' %}
+    <span class="tag {{ 'good' if gw.ativa else 'bad' }}">Gateway: {{ ('ativo até ' ~ gw_data(gw.expires_at)) if gw.ativa else ('ativação vencida' if gw.vencida else 'ativação necessária') }}</span>
+    {% else %}
     <span class="tag {{ 'good' if credenciais else 'bad' }}">Client ID/Secret: {{ ('configurados (' ~ origem_cred ~ ')') if credenciais and not simulado else ('simulador' if simulado else 'faltando') }}</span>
     <span class="tag {{ 'good' if token.valido_ate }}">Token: {{ ('válido até ' ~ token.valido_ate) if token.valido_ate else 'não gerado' }} · {{ token.pedidos_hoje }}/{{ token_max }} hoje</span>
+    {% endif %}
     <span class="tag {{ 'good' if cofre else 'bad' }}">Cofre das chaves (DOMINIO_KEY): {{ 'ok' if cofre else 'faltando' }}</span>
     <span class="tag {{ 'good' if env_ativo else 'bad' }}">Servidor (DOMINIO_ENVIO_ATIVO): {{ 'habilitado' if env_ativo else 'desabilitado' }}</span>
     <span class="tag {{ 'good' if ligado else '' }}">Envio: {{ 'LIGADO' if ligado else 'desligado' }}</span>
-    <span class="tag">API invoice {{ versao }}</span>
+    {% if modo == 'direto' %}<span class="tag">API invoice {{ versao }}</span>{% endif %}
     <span class="tag">{{ ativas }} empresa(s) ativas · {{ com_chave }} com chave</span>
   </div>
   {% if worker.erro %}<p class="flash erro">Último erro do envio: {{ worker.erro }}</p>{% endif %}
@@ -50,7 +55,7 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
     <form method="post" action="{{ url_for('dominio_ligar') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
       <input type="hidden" name="ligar" value="{{ '0' if ligado else '1' }}">
-      <button class="btn {{ 'btn-ghost' if ligado else 'btn-primary' }}" {% if not ligado and not (credenciais and cofre) %}disabled title="Configure credenciais e DOMINIO_KEY"{% endif %}>{{ 'Desligar envio' if ligado else 'Ligar envio' }}</button>
+      <button class="btn {{ 'btn-ghost' if ligado else 'btn-primary' }}" {% if not ligado and not (cofre and ((modo == 'gateway' and gw.ativa) or (modo == 'direto' and credenciais))) %}disabled title="Configure a conexão e a DOMINIO_KEY"{% endif %}>{{ 'Desligar envio' if ligado else 'Ligar envio' }}</button>
     </form>
     <form method="post" action="{{ url_for('dominio_testar') }}">
       <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
@@ -65,6 +70,27 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
 </div>
 
 {% if papel_atual == 'admin' %}
+<div class="card" id="conexao">
+  <h2>Conexão com a Domínio</h2>
+  <form method="post" action="{{ url_for('dominio_modo') }}" class="dm-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    {% for k, rot in modos.items() %}
+    <label><input type="radio" name="modo" value="{{ k }}" {{ 'checked' if modo == k }} onchange="this.form.submit()"> {{ rot }}</label>
+    {% endfor %}
+  </form>
+  {% if modo == 'gateway' %}
+  <form method="post" action="{{ url_for('dominio_gateway_ativar') }}" class="dm-form" style="margin-top:10px">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <label>Código de ativação <input type="password" name="ticket" autocomplete="off" style="width:320px"
+      placeholder="{{ 'instalação ativa; cole um novo código só para renovar' if gw.ativa else 'Cole aqui o código recebido do criador do sistema' }}"></label>
+    <button class="btn btn-primary" {% if not cofre %}disabled title="Defina DOMINIO_KEY no servidor"{% endif %}>{{ 'Testar conexão / renovar' if gw.ativa else 'Ativar instalação' }}</button>
+  </form>
+  {% if gw.installation_id %}<p class="hint">Instalação {{ gw.installation_id }}{% if gw.expires_at %} · validade {{ gw_data(gw.expires_at) }}{% endif %}</p>{% endif %}
+  {% endif %}
+</div>
+{% endif %}
+
+{% if papel_atual == 'admin' and modo == 'direto' %}
 <div class="card" id="credenciais">
   <h2>Credenciais do integrador (Domínio)</h2>
   <form method="post" action="{{ url_for('dominio_credenciais') }}" class="dm-form">
@@ -148,7 +174,7 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
       <td class="mono">{{ e['cnpj'] }}</td>
       <td>{% if e['tem_chave'] %}<span class="pill on dot">cadastrada</span>{% if e['ativada'] %} <span class="tag">ativada</span>{% endif %}{% else %}<span class="tag">sem chave</span>{% endif %}</td>
       <td class="dm-msg">{{ resumo_info(e['chave_info']) or '—' }}
-        {% if papel_atual=='admin' and e['tem_chave'] %}
+        {% if papel_atual=='admin' and e['tem_chave'] and modo == 'direto' %}
         <form method="post" action="{{ url_for('dominio_conferir') }}" style="display:inline">
           <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="cnpj" value="{{ e['cnpj'] }}">
           <button class="btn sm btn-ghost" {% if not credenciais %}disabled title="Cadastre o Client ID/Secret"{% endif %}>Conferir</button>

@@ -18,7 +18,7 @@ from engines import backup as bak
 from engines import importar_xml
 from engines import mail as mailer
 from engines import guard
-from engines import dominio_api, dominio_fila
+from engines import dominio_api, dominio_fila, dominio_gateway
 import time
 from collections import defaultdict
 
@@ -2072,6 +2072,8 @@ def dominio():
                            origem_cred=cfg['origem_credenciais'], client_id=cfg['client_id'],
                            token=dominio_api.estado_token(), token_max=dominio_api.TOKEN_MAX_DIA,
                            resumo_info=_resumo_info,
+                           modo=dominio_fila.modo(), modos=dominio_fila.MODOS, gw=dominio_gateway.instalacao(),
+                           gw_data=_data_gw,
                            worker=dominio_fila.estado_worker(),
                            ativas=sum(1 for e in empresas if e['ativo']),
                            com_chave=sum(1 for e in empresas if e['tem_chave']))
@@ -2094,6 +2096,37 @@ def _resumo_info(txt):
         elif o not in (None, ''):
             yield pre, o
     return ' · '.join('%s' % v for _, v in list(planos(j))[:4])[:160]
+
+def _data_gw(ts):
+    try:
+        return datetime.fromtimestamp(int(ts)).strftime('%d/%m/%Y') if ts else ''
+    except (ValueError, OSError, OverflowError):
+        return ''
+
+@app.route('/dominio/modo', methods=['POST'])
+@admin_required
+def dominio_modo():
+    if not _csrf_ok(): abort(400)
+    m = request.form.get('modo', '')
+    if m in dominio_fila.MODOS:
+        models.set_param('dominio_modo', m)
+        flash('Conexão com a Domínio: %s.' % dominio_fila.MODOS[m], 'ok')
+    return redirect(url_for('dominio'))
+
+@app.route('/dominio/gateway/ativar', methods=['POST'])
+@admin_required
+def dominio_gateway_ativar():
+    if not _csrf_ok(): abort(400)
+    ticket = request.form.get('ticket', '').strip()
+    try:
+        inst = dominio_gateway.ativar(ticket)
+        flash(('Instalação ativada no gateway até %s.' if ticket else 'Conexão com o gateway OK (ativa até %s).')
+              % _data_gw(inst['expires_at']), 'ok')
+    except ValueError as e:
+        flash(str(e), 'erro')
+    except dominio_api.DominioErro as e:
+        flash('Gateway: %s' % e, 'erro')
+    return redirect(url_for('dominio'))
 
 @app.route('/dominio/credenciais', methods=['POST'])
 @admin_required
@@ -2182,6 +2215,8 @@ def dominio_importar():
 @admin_required
 def dominio_testar():
     if not _csrf_ok(): abort(400)
+    if dominio_fila.modo() == 'gateway':
+        return dominio_gateway_ativar()
     try:
         r = dominio_api.cliente().testar()
         flash('Conexão com a Domínio OK: %s' % str(r.get('message') or r)[:200], 'ok')
