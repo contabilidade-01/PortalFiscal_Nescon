@@ -126,7 +126,7 @@ def salvar_empresa(cnpj, ativo=None, data_inicial=None, chave=None, limpar_chave
                   'atualizado=excluded.atualizado',
                   (cnpj, atual['ativo'], atual['data_inicial'], atual['chave_cifrada'], agora()))
         if chave or limpar_chave:  # chave trocada: a chave de envio antiga nao vale mais
-            c.execute("UPDATE dominio_empresa SET chave_envio_cifrada='' WHERE cnpj=?", (cnpj,))
+            c.execute("UPDATE dominio_empresa SET chave_envio_cifrada='', chave_info=NULL WHERE cnpj=?", (cnpj,))
         if chave:  # chave nova: libera o que estava pausado por credencial
             c.execute("UPDATE dominio_envios SET estado='REPETIR', proximo=?, mensagem='' "
                       "WHERE cnpj=? AND estado='PAUSADO'", (agora(), cnpj))
@@ -236,6 +236,45 @@ def _atualizar(c, eid, **kw):
               tuple(kw.values()) + (eid,))
 
 
+def _cnpjs_na_resposta(obj):
+    """CNPJs (14 digitos) em qualquer campo da resposta de activation/info (nomes nao documentados)."""
+    achados = []
+    if isinstance(obj, dict):
+        for v in obj.values():
+            achados += _cnpjs_na_resposta(v)
+    elif isinstance(obj, list):
+        for v in obj:
+            achados += _cnpjs_na_resposta(v)
+    elif isinstance(obj, (str, int)):
+        d = re.sub(r'\D', '', str(obj))
+        if len(d) == 14:
+            achados.append(d)
+    return achados
+
+
+def conferir_chave(cnpj, cli=None):
+    """activation/info com a chave do contador. Guarda o retorno (escritorio, cliente, CNPJ) e
+    PAUSA se a chave for de outro CNPJ. Retorna o dict da resposta."""
+    cli = cli or api.cliente()
+    with models.con() as c:
+        r = c.execute('SELECT chave_cifrada FROM dominio_empresa WHERE cnpj=?', (cnpj,)).fetchone()
+    if not r or not r['chave_cifrada']:
+        raise api.DominioPausar('Empresa sem chave da Domínio cadastrada.')
+    try:
+        info = cli.info_chave(decifrar(r['chave_cifrada']))
+    except api.DominioRecusado as e:
+        raise api.DominioPausar('A Domínio não reconheceu a chave desta empresa: %s' % e, e.codigo) from None
+    import json as _j
+    with models.con() as c:
+        c.execute('UPDATE dominio_empresa SET chave_info=?, atualizado=? WHERE cnpj=?',
+                  (_j.dumps(info, ensure_ascii=False)[:2000], agora(), cnpj))
+    cnpjs = _cnpjs_na_resposta(info)
+    if cnpjs and cnpj not in cnpjs:
+        raise api.DominioPausar('A chave cadastrada é do CNPJ %s, não desta empresa (%s). Confira com o '
+                                'Onvio e cadastre a chave correta.' % (cnpjs[0], cnpj))
+    return info
+
+
 def _chave_envio(cnpj, cli):
     """Chave que vai no header dos envios. Com DOMINIO_ATIVAR_CHAVE=1 (padrao), troca a chave
     do cliente 1x em activation/enable e guarda o resultado cifrado; nas proximas, reusa."""
@@ -248,6 +287,7 @@ def _chave_envio(cnpj, cli):
         return decifrar(r['chave_cifrada'])
     if r['chave_envio_cifrada']:
         return decifrar(r['chave_envio_cifrada'])
+    conferir_chave(cnpj, cli)  # guia oficial: confirmar que a chave e deste CNPJ antes de ativar
     try:
         nova = cli.ativar_chave(decifrar(r['chave_cifrada']))
     except api.DominioRecusado as e:  # chave do cliente invalida: para a empresa toda

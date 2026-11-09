@@ -28,7 +28,12 @@ class Falso:
     """Cliente da API em memoria. `erros` = excecoes a levantar no proximo enviar()."""
     def __init__(self):
         self.enviados, self.erros, self.lotes = [], [], {}
-        self.ativacoes, self.erro_ativar = [], None
+        self.ativacoes, self.erro_ativar, self.conferidas = [], None, []
+        self.info = {'escritorio': 'NESCON', 'cliente': 'EMPRESA A', 'cnpj': '12.345.678/0001-95'}
+
+    def info_chave(self, chave):
+        self.conferidas.append(chave)
+        return self.info
 
     def ativar_chave(self, chave):
         if self.erro_ativar:
@@ -53,6 +58,12 @@ def _xml(path, texto):
     with open(path, 'w', encoding='utf-8') as f:
         f.write(texto)
     return path
+
+
+@pytest.fixture(autouse=True)
+def banco_limpo(tmp_path):
+    models.DB = str(tmp_path / 'limpo.db')
+    models.init_db()
 
 
 @pytest.fixture
@@ -260,6 +271,7 @@ def test_cliente_http_envio():
     assert cli.enviar(b'<x/>', 'a.xml', 'K') == 'B1'
     tok = s.chamadas[0]
     assert tok[2]['data']['audience'] == api.AUDIENCE_ONVIO
+    assert tok[2]['data']['client_id'] == 'id' and tok[2]['data']['client_secret'] == 'sec'  # guia: no corpo
     assert tok[2]['data']['grant_type'] == 'client_credentials' and tok[2]['headers']['Authorization'].startswith('Basic ')
     metodo, url, kw = s.chamadas[1]
     assert url.endswith('/dominio/invoice/v3/batches')
@@ -329,3 +341,67 @@ def test_ativacao_http():
     assert api.DominioClient(_cfg(), session=s).ativar_chave('K1') == 'K2'
     metodo, url, kw = s.chamadas[1]
     assert url.endswith('/dominio/integration/v1/activation/enable') and kw['headers']['x-integration-key'] == 'K1'
+
+
+def test_confere_cnpj_antes_de_ativar(base):
+    fila.varrer(); cli = Falso(); fila.processar(5, cliente=cli)
+    assert cli.conferidas == ['chave-onvio-a'] and cli.ativacoes == ['chave-onvio-a']
+    with models.con() as c:
+        info = c.execute('SELECT chave_info FROM dominio_empresa WHERE cnpj=?', (CNPJ,)).fetchone()[0]
+    assert 'EMPRESA A' in info
+
+
+def test_chave_de_outro_cnpj_pausa_sem_ativar(base):
+    fila.varrer(); cli = Falso(); cli.info = {'cnpj': '99.888.777/0001-66', 'cliente': 'OUTRA'}
+    fila.processar(5, cliente=cli)
+    assert cli.ativacoes == [] and not cli.enviados
+    assert {r['estado'] for r in _linhas().values()} == {'PAUSADO'}
+    assert '99888777000166' in next(iter(_linhas().values()))['mensagem']
+
+
+def test_mensagens_do_guia():
+    ok = {'id': 'X', 'filesExpanded': [{'apiStatus': {'code': 'Z1', 'message': 'Arquivo armazenado na API'}}]}
+    espera = {'id': 'X', 'status': {'message': 'Aguardando processamento. Por favor aguarde o arquivo ser processado.'}}
+    assert api.interpretar_lote(ok)[0] == 'CONFIRMADO'
+    assert api.interpretar_lote(espera)[0] is None
+
+
+def test_token_e_guardado_e_reusado_entre_processos():
+    s1 = _Sessao([_Resp(200, {'access_token': 'T1', 'expires_in': 86400}), _Resp(200, {'message': 'ok'})])
+    api.DominioClient(_cfg(), session=s1).testar()
+    s2 = _Sessao([_Resp(200, {'message': 'ok'})])  # novo processo: sem pedir token
+    api.DominioClient(_cfg(), session=s2).testar()
+    assert [c[1] for c in s2.chamadas] == [api.config()['api_url'] + '/status/v2/integration/info']
+    assert s2.chamadas[0][2]['headers']['Authorization'] == 'Bearer T1'
+    assert api.tokens_hoje() == 1
+
+
+def test_limite_diario_de_tokens():
+    models.set_param('dominio_token_contagem', '%s:%d' % (__import__('datetime').date.today(), api.TOKEN_MAX_DIA))
+    with pytest.raises(api.DominioRepetir):
+        api.DominioClient(_cfg(), session=_Sessao([])).token()
+
+
+def test_credenciais_pela_tela(monkeypatch):
+    monkeypatch.delenv('DOMINIO_CLIENT_ID', raising=False)
+    monkeypatch.delenv('DOMINIO_CLIENT_SECRET', raising=False)
+    cli = portal.app.test_client()
+    with cli.session_transaction() as s:
+        s['uid'] = 1; s['nome'] = 'Admin'; s['papel'] = 'admin'; s['_csrf'] = 'tok'
+    r = cli.post('/dominio/credenciais', data={'_csrf': 'tok', 'client_id': 'CID-1', 'client_secret': 'SEGREDO-1'})
+    assert r.status_code == 302
+    assert 'SEGREDO-1' not in (models.get_param('dominio_client_secret') or '')
+    cfg = api.config()
+    assert (cfg['client_id'], cfg['client_secret'], cfg['origem_credenciais']) == ('CID-1', 'SEGREDO-1', 'tela')
+    html = cli.get('/dominio').get_data(as_text=True)
+    assert 'SEGREDO-1' not in html and 'configurados (tela)' in html
+    monkeypatch.setenv('DOMINIO_CLIENT_ID', 'ENV'); monkeypatch.setenv('DOMINIO_CLIENT_SECRET', 'ENVSEC')
+    assert api.config()['origem_credenciais'] == 'ambiente'
+
+
+def test_info_chave_http():
+    s = _Sessao([_Resp(200, {'access_token': 'T'}), _Resp(200, {'cnpj': '1'})])
+    api.DominioClient(_cfg(), session=s).info_chave('K1')
+    metodo, url, kw = s.chamadas[1]
+    assert metodo == 'GET' and url.endswith('/integration/v1/activation/info')
+    assert kw['headers']['x-integration-key'] == 'K1'

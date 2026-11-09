@@ -2055,6 +2055,7 @@ def dominio():
                            + w + ' ORDER BY d.atualizado DESC, d.id DESC LIMIT 50 OFFSET ?',
                            args + [(pagina - 1) * 50]).fetchall()
         empresas = c.execute('''SELECT e.cnpj, e.nome, e.carteira, COALESCE(d.ativo,0) ativo, d.data_inicial,
+                                       d.chave_info, CASE WHEN COALESCE(d.chave_envio_cifrada,'')!='' THEN 1 ELSE 0 END ativada,
                                        CASE WHEN COALESCE(d.chave_cifrada,'')!='' THEN 1 ELSE 0 END tem_chave
                                 FROM empresas e LEFT JOIN dominio_empresa d ON d.cnpj=e.cnpj
                                 WHERE e.ativo=1 ORDER BY COALESCE(d.ativo,0) DESC, e.nome''').fetchall()
@@ -2068,9 +2069,71 @@ def dominio():
                            env_ativo=os.environ.get('DOMINIO_ENVIO_ATIVO', '0') == '1',
                            credenciais=dominio_api.credenciais_ok(cfg), simulado=cfg['simulado'],
                            cofre=dominio_fila.cofre_ok(), versao=cfg['versao'],
+                           origem_cred=cfg['origem_credenciais'], client_id=cfg['client_id'],
+                           token=dominio_api.estado_token(), token_max=dominio_api.TOKEN_MAX_DIA,
+                           resumo_info=_resumo_info,
                            worker=dominio_fila.estado_worker(),
                            ativas=sum(1 for e in empresas if e['ativo']),
                            com_chave=sum(1 for e in empresas if e['tem_chave']))
+
+def _resumo_info(txt):
+    """Resumo legivel do retorno de activation/info (escritorio, cliente, CNPJ)."""
+    if not txt:
+        return ''
+    try:
+        j = json.loads(txt)
+    except ValueError:
+        return txt[:120]
+    def planos(o, pre=''):
+        if isinstance(o, dict):
+            for k, v in o.items():
+                yield from planos(v, k)
+        elif isinstance(o, list):
+            for v in o:
+                yield from planos(v, pre)
+        elif o not in (None, ''):
+            yield pre, o
+    return ' · '.join('%s' % v for _, v in list(planos(j))[:4])[:160]
+
+@app.route('/dominio/credenciais', methods=['POST'])
+@admin_required
+def dominio_credenciais():
+    if not _csrf_ok(): abort(400)
+    cid = request.form.get('client_id', '').strip()
+    sec = request.form.get('client_secret', '').strip()
+    if request.form.get('apagar'):
+        models.set_param('dominio_client_id', ''); models.set_param('dominio_client_secret', '')
+        models.set_param('dominio_token', ''); models.set_param('dominio_token_expira', '0')
+        flash('Credenciais da Domínio apagadas da tela.', 'ok')
+        return redirect(url_for('dominio'))
+    if not dominio_fila.cofre_ok():
+        flash('Defina DOMINIO_KEY no servidor antes de salvar as credenciais.', 'erro')
+        return redirect(url_for('dominio'))
+    if not cid or len(cid) > 300 or len(sec) > 1000 or (not sec and not models.get_param('dominio_client_secret')):
+        flash('Informe o Client ID e o Client Secret fornecidos pela Domínio.', 'erro')
+        return redirect(url_for('dominio'))
+    trocou = cid != (models.get_param('dominio_client_id') or '') or bool(sec)
+    models.set_param('dominio_client_id', cid)
+    if sec:
+        models.set_param('dominio_client_secret', dominio_fila.cifrar(sec))
+    if trocou:  # token antigo era de outra credencial
+        models.set_param('dominio_token', ''); models.set_param('dominio_token_expira', '0')
+    flash('Credenciais da Domínio salvas. Use "Testar conexão" para gerar o token do dia.', 'ok')
+    return redirect(url_for('dominio'))
+
+@app.route('/dominio/empresa/conferir', methods=['POST'])
+@admin_required
+def dominio_conferir():
+    if not _csrf_ok(): abort(400)
+    cnpj = re.sub(r'\D', '', request.form.get('cnpj', ''))
+    try:
+        dominio_fila.conferir_chave(cnpj)
+        with models.con() as c:
+            r = c.execute('SELECT chave_info FROM dominio_empresa WHERE cnpj=?', (cnpj,)).fetchone()
+        flash('Chave de %s conferida na Domínio: %s' % (cnpj, _resumo_info(r['chave_info'] if r else '')), 'ok')
+    except dominio_api.DominioErro as e:
+        flash('Chave de %s: %s' % (cnpj, e), 'erro')
+    return redirect(url_for('dominio') + '#empresas')
 
 @app.route('/dominio/ligar', methods=['POST'])
 @admin_required
