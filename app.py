@@ -781,13 +781,22 @@ def cliente_editar(eid):
         flash('Cliente atualizado.', 'ok'); return redirect(url_for('clientes'))
     return render_template('cliente_form.html', e=e, carteiras=models.CARTEIRAS)
 
-@app.route('/clientes/<int:eid>/excluir', methods=['POST'])
+@app.route('/clientes/<int:eid>/excluir', methods=['GET', 'POST'])
 @perm_required('excluir_cliente')
 def cliente_excluir(eid):
+    """GET mostra a confirmacao (sem depender do confirm() do navegador); POST exclui."""
     ids = _visiveis_ids()
     if ids is not None and eid not in set(ids):
         flash('Este cliente não está no seu escopo.', 'erro')
         return redirect(url_for('clientes'))
+    if request.method == 'GET' or request.form.get('confirmar') != '1':
+        with models.con() as c:
+            e = c.execute('SELECT id, cnpj, nome, carteira FROM empresas WHERE id=?', (eid,)).fetchone()
+        if not e:
+            flash('Cliente não encontrado.', 'erro')
+            return redirect(url_for('clientes'))
+        return render_template('clientes_excluir.html', empresas=[e], faltando=[],
+                               acao=url_for('cliente_excluir', eid=eid), cnpjs=e['cnpj'])
     nome = models.excluir_empresa(eid)
     flash('Cliente %s excluído da base. (Os XML já baixados permanecem na pasta.)' % (nome or eid), 'ok')
     return redirect(url_for('clientes'))
@@ -815,7 +824,7 @@ def clientes_excluir_lote():
         flash('Nenhum CNPJ da lista está na base.', 'erro')
         return redirect(url_for('clientes'))
     return render_template('clientes_excluir.html', empresas=empresas, faltando=faltando,
-                           cnpjs='\n'.join(e['cnpj'] for e in empresas))
+                           acao=url_for('clientes_excluir_lote'), cnpjs='\n'.join(e['cnpj'] for e in empresas))
 
 # ---- Modulo DAS (placeholder — expansao futura) ----
 @app.route('/das')

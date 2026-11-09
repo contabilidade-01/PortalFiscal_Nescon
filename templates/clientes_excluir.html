@@ -10,8 +10,8 @@
     </tbody>
   </table></div>
   {% if faltando %}<p class="muted" style="margin-top:10px">Não estão na base: <span class="mono">{{ faltando|join(', ') }}</span></p>{% endif %}
-  <form method="post" action="{{ url_for('clientes_excluir_lote') }}" style="margin-top:14px"
-        onsubmit="return confirm('Excluir {{ empresas|length }} cliente(s)? Esta ação não pode ser desfeita.');">
+  <p style="margin-top:12px;color:var(--err);font-weight:600">Esta ação não pode ser desfeita.</p>
+  <form method="post" action="{{ acao }}" style="margin-top:10px">
     <input type="hidden" name="cnpjs" value="{{ cnpjs }}">
     <input type="hidden" name="confirmar" value="1">
     <div class="rowform">

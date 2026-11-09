@@ -47,8 +47,16 @@ def _dominio(cnpj):
 def test_excluir_um_limpa_dominio(cli):
     with models.con() as c:
         eid = c.execute('SELECT id FROM empresas WHERE cnpj=?', (A,)).fetchone()[0]
-    assert cli.post('/clientes/%d/excluir' % eid).status_code == 302
+    r = cli.get('/clientes/%d/excluir' % eid)  # confirmacao na pagina, sem confirm() do navegador
+    assert r.status_code == 200 and 'Excluir 1 cliente(s)' in r.get_data(as_text=True) and A in _cnpjs()
+    assert cli.post('/clientes/%d/excluir' % eid).status_code == 200 and A in _cnpjs()  # sem confirmar=1
+    assert cli.post('/clientes/%d/excluir' % eid, data={'confirmar': '1'}).status_code == 302
     assert A not in _cnpjs() and _dominio(A) == (0, 0)
+
+
+def test_botao_excluir_nao_depende_de_confirm(cli):
+    html = cli.get('/clientes').get_data(as_text=True)
+    assert 'confirm(' not in html and '/excluir"' in html
 
 
 def test_lote_confere_antes_de_excluir(cli):
