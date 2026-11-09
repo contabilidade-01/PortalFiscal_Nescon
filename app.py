@@ -788,12 +788,34 @@ def cliente_excluir(eid):
     if ids is not None and eid not in set(ids):
         flash('Este cliente não está no seu escopo.', 'erro')
         return redirect(url_for('clientes'))
-    with models.con() as c:
-        r = c.execute('SELECT nome FROM empresas WHERE id=?', (eid,)).fetchone()
-        c.execute('DELETE FROM empresas WHERE id=?', (eid,))
-        c.execute('DELETE FROM usuario_empresas WHERE empresa_id=?', (eid,))
-    flash('Cliente %s excluído da base. (Os XML já baixados permanecem na pasta.)' % (r['nome'] if r else eid), 'ok')
+    nome = models.excluir_empresa(eid)
+    flash('Cliente %s excluído da base. (Os XML já baixados permanecem na pasta.)' % (nome or eid), 'ok')
     return redirect(url_for('clientes'))
+
+@app.route('/clientes/excluir-lote', methods=['POST'])
+@admin_required
+def clientes_excluir_lote():
+    """1o POST confere a lista (CNPJs colados); 2o POST, com confirmar=1, exclui."""
+    cnpjs = []
+    for d in re.findall(r'\d[\d./-]{10,20}\d', request.form.get('cnpjs', '')):
+        d = re.sub(r'\D', '', d)
+        if len(d) in (11, 14) and d not in cnpjs:
+            cnpjs.append(d)
+    with models.con() as c:
+        achadas = [c.execute('SELECT id, cnpj, nome, carteira FROM empresas WHERE cnpj=?', (d,)).fetchone()
+                   for d in cnpjs]
+    empresas = [e for e in achadas if e]
+    faltando = [d for d, e in zip(cnpjs, achadas) if not e]
+    if request.form.get('confirmar') == '1' and empresas:
+        nomes = [models.excluir_empresa(e['id']) for e in empresas]
+        flash('%d cliente(s) excluído(s): %s. Os XML já baixados permanecem na pasta.'
+              % (len(nomes), ', '.join(n for n in nomes if n)), 'ok')
+        return redirect(url_for('clientes'))
+    if not empresas:
+        flash('Nenhum CNPJ da lista está na base.', 'erro')
+        return redirect(url_for('clientes'))
+    return render_template('clientes_excluir.html', empresas=empresas, faltando=faltando,
+                           cnpjs='\n'.join(e['cnpj'] for e in empresas))
 
 # ---- Modulo DAS (placeholder — expansao futura) ----
 @app.route('/das')
