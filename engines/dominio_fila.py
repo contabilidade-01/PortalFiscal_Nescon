@@ -125,6 +125,8 @@ def salvar_empresa(cnpj, ativo=None, data_inicial=None, chave=None, limpar_chave
                   'data_inicial=excluded.data_inicial, chave_cifrada=excluded.chave_cifrada, '
                   'atualizado=excluded.atualizado',
                   (cnpj, atual['ativo'], atual['data_inicial'], atual['chave_cifrada'], agora()))
+        if chave or limpar_chave:  # chave trocada: a chave de envio antiga nao vale mais
+            c.execute("UPDATE dominio_empresa SET chave_envio_cifrada='' WHERE cnpj=?", (cnpj,))
         if chave:  # chave nova: libera o que estava pausado por credencial
             c.execute("UPDATE dominio_envios SET estado='REPETIR', proximo=?, mensagem='' "
                       "WHERE cnpj=? AND estado='PAUSADO'", (agora(), cnpj))
@@ -234,13 +236,34 @@ def _atualizar(c, eid, **kw):
               tuple(kw.values()) + (eid,))
 
 
-def _chave_empresa(cnpj, cache):
+def _chave_envio(cnpj, cli):
+    """Chave que vai no header dos envios. Com DOMINIO_ATIVAR_CHAVE=1 (padrao), troca a chave
+    do cliente 1x em activation/enable e guarda o resultado cifrado; nas proximas, reusa."""
+    with models.con() as c:
+        r = c.execute('SELECT chave_cifrada, chave_envio_cifrada FROM dominio_empresa '
+                      'WHERE cnpj=? AND ativo=1', (cnpj,)).fetchone()
+    if not r or not r['chave_cifrada']:
+        return ''
+    if not api.config()['ativar_chave']:
+        return decifrar(r['chave_cifrada'])
+    if r['chave_envio_cifrada']:
+        return decifrar(r['chave_envio_cifrada'])
+    try:
+        nova = cli.ativar_chave(decifrar(r['chave_cifrada']))
+    except api.DominioRecusado as e:  # chave do cliente invalida: para a empresa toda
+        raise api.DominioPausar('A Domínio não ativou a chave desta empresa: %s Gere outra no Onvio '
+                                '(API → Chave) e cadastre de novo.' % e, e.codigo) from None
+    with models.con() as c:
+        c.execute("UPDATE dominio_empresa SET chave_envio_cifrada=?, atualizado=? WHERE cnpj=?",
+                  (cifrar(nova), agora(), cnpj))
+    return nova
+
+
+def _chave_empresa(cnpj, cache, cli):
     if cnpj not in cache:
-        with models.con() as c:
-            r = c.execute('SELECT chave_cifrada FROM dominio_empresa WHERE cnpj=? AND ativo=1', (cnpj,)).fetchone()
         try:
-            cache[cnpj] = decifrar(r['chave_cifrada']) if r else ''
-        except api.DominioPausar as e:
+            cache[cnpj] = _chave_envio(cnpj, cli)
+        except api.DominioErro as e:
             cache[cnpj] = e
     v = cache[cnpj]
     if isinstance(v, Exception):
@@ -277,7 +300,7 @@ def processar(limite=5, cliente=None):
         feitos += 1
         tent = d['tentativas'] + 1
         try:
-            chave = _chave_empresa(d['cnpj'], chaves)
+            chave = _chave_empresa(d['cnpj'], chaves, cli)
             with open(d['caminho'], 'rb') as f:
                 conteudo = f.read()
             h = hashlib.sha256(conteudo).hexdigest()
@@ -325,7 +348,7 @@ def consultar(limite=20, cliente=None):
     for d in rows:
         n += 1
         try:
-            lote = cli.consultar(d['lote_id'], _chave_empresa(d['cnpj'], chaves))
+            lote = cli.consultar(d['lote_id'], _chave_empresa(d['cnpj'], chaves, cli))
             estado, codigo, msg = api.interpretar_lote(lote)
             consultas = d['consultas'] + 1
             with models.con() as c:

@@ -34,13 +34,20 @@ XML/<cnpj>/<AAAA-MM>/<doc>/<sub>/  →  varrer()  →  tabela dominio_envios  �
 | INCERTO | Pode ter chegado: conferir na Domínio antes de reenviar |
 | FORA_PERIODO | Antes da data inicial da empresa |
 
+## Verificado na API real (2026-11-09, sem credencial)
+- Rotas `invoice/v2/batches` e `invoice/v3/batches` existem (versão inexistente dá 404).
+- `status/v2/integration/info` e `integration/v1/activation/enable` existem.
+- **Toda rota exige o token do integrador**, inclusive a ativação: só a chave do cliente não basta.
+- O endpoint de token aceita o formato `client_credentials` (credencial falsa → `access_denied`).
+- `integration/v2/client/info` (doc pública) não existe mais (404); o código não usa.
+
 ## A confirmar com a Domínio (tudo ajustável por env, sem mudar código)
 | Dúvida | Env | Padrão hoje |
 |---|---|---|
-| Grant `client_credentials` e `audience` | `DOMINIO_AUDIENCE` | sem audience |
+| Grant `client_credentials` e `audience` | `DOMINIO_AUDIENCE` | audience oficial `409f91f6-…` (`-` desliga) |
 | Versão do envio (v2 público × v3 do guia) | `DOMINIO_INVOICE_VERSAO` | `v3` |
 | Nome do header da chave | `DOMINIO_HEADER_CHAVE` | `x-integration-key` |
-| Trocar a chave em `activation/enable`? | `DOMINIO_ATIVAR_CHAVE` | `0` (ainda não ligado na fila) |
+| Trocar a chave em `activation/enable`? | `DOMINIO_ATIVAR_CHAVE` | `1`: troca 1x por empresa, guarda cifrada e reusa; trocar a chave na tela refaz |
 | `boxeFile` | `DOMINIO_BOXE_FILE` | `0` |
 | Tabela de códigos de retorno | `DOMINIO_CODIGOS` (JSON código→estado) | só `EA10`=JA_EXISTENTE |
 | NFS-e Padrão Nacional aceita sem conversão? | — | enviado como está |

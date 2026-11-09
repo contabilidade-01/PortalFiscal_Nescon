@@ -19,6 +19,7 @@ from datetime import datetime
 import requests
 
 TIMEOUT = (10, 60)
+AUDIENCE_ONVIO = '409f91f6-dc17-44c8-a5d8-e0a1bafd8b67'
 LIMITE_BYTES = 2 * 1024 * 1024  # o EXE de referencia limitava em 2 MB
 
 
@@ -53,12 +54,15 @@ def config():
     return {
         'client_id': e('DOMINIO_CLIENT_ID', ''),
         'client_secret': e('DOMINIO_CLIENT_SECRET', ''),
-        'audience': e('DOMINIO_AUDIENCE', ''),
+        # audience oficial do Onvio (pagina "Authenticating with OAuth 2.0"); "-" = nao enviar
+        'audience': '' if e('DOMINIO_AUDIENCE', '') == '-' else e('DOMINIO_AUDIENCE', '') or AUDIENCE_ONVIO,
         'token_url': e('DOMINIO_TOKEN_URL', 'https://auth.thomsonreuters.com/oauth/token'),
         'api_url': e('DOMINIO_API_URL', 'https://api.onvio.com.br/dominio').rstrip('/'),
         'versao': e('DOMINIO_INVOICE_VERSAO', 'v3'),
         'header_chave': e('DOMINIO_HEADER_CHAVE', 'x-integration-key'),
-        'ativar_chave': e('DOMINIO_ATIVAR_CHAVE', '0') == '1',
+        # Guia de integracao: a chave gerada no Onvio e trocada 1x em activation/enable pela
+        # chave de envio. Padrao ligado; DOMINIO_ATIVAR_CHAVE=0 envia a chave do cliente direto.
+        'ativar_chave': e('DOMINIO_ATIVAR_CHAVE', '1') == '1',
         'boxe_file': e('DOMINIO_BOXE_FILE', '0') == '1',
         'simulado': e('DOMINIO_SIMULADO', '0') == '1',
     }
