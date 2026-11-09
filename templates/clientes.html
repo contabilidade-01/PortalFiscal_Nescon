@@ -79,6 +79,16 @@
 
 {% if papel_atual == 'admin' %}
 <div class="card">
+  <h2 style="margin-top:0">Excluir clientes (em lote)</h2>
+  <form method="post" action="{{ url_for('clientes_excluir_lote') }}">
+    <textarea name="cnpjs" rows="5" style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2);color:var(--txt);font-family:ui-monospace,Consolas,monospace;font-size:13px" placeholder="11.222.333/0001-81&#10;44555666000199"></textarea>
+    <div class="rowform" style="margin-top:10px">
+      <button class="btn sm" style="background:var(--errbg);color:var(--err)">Conferir lista</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
   <h2 style="margin-top:0">Mover para carteira (em lote)</h2>
   <p class="desc">Cole os CNPJs (com ou sem pontuação, um por linha ou copiados da planilha). Só muda quem pode ver; o robô continua rodando para todas as empresas.</p>
   <form method="post" action="{{ url_for('clientes_carteira') }}">

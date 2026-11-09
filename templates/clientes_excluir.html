@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+{% block titulo %}Excluir clientes{% endblock %}
+{% block corpo %}
+<div class="card">
+  <h2 style="margin-top:0">Excluir {{ empresas|length }} cliente(s)</h2>
+  <div class="tbl-wrap"><table style="min-width:560px">
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Carteira</th></tr></thead>
+    <tbody>
+    {% for e in empresas %}<tr><td class="empresa-nome">{{ (e['nome'] or '')|title }}</td><td class="mono">{{ e['cnpj'] }}</td><td>{{ e['carteira'] }}</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+  {% if faltando %}<p class="muted" style="margin-top:10px">Não estão na base: <span class="mono">{{ faltando|join(', ') }}</span></p>{% endif %}
+  <form method="post" action="{{ url_for('clientes_excluir_lote') }}" style="margin-top:14px"
+        onsubmit="return confirm('Excluir {{ empresas|length }} cliente(s)? Esta ação não pode ser desfeita.');">
+    <input type="hidden" name="cnpjs" value="{{ cnpjs }}">
+    <input type="hidden" name="confirmar" value="1">
+    <div class="rowform">
+      <a href="{{ url_for('clientes') }}" class="btn btn-ghost sm">Cancelar</a>
+      <button class="btn sm" style="background:var(--err);color:#fff">Excluir {{ empresas|length }} cliente(s)</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

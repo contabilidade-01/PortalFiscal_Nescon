@@ -436,6 +436,22 @@ def init_db():
                     c.execute('INSERT OR IGNORE INTO usuario_permissoes(user_id,permissao) VALUES(?,?)',
                               (op['id'], k))
 
+def excluir_empresa(eid):
+    """Remove o cliente da base e tudo que o robo/integracoes usariam dele. Os XML ja
+    baixados ficam na pasta (a Dominio so le pastas de empresas com cadastro ativo).
+    Retorna o nome excluido ou None."""
+    with con() as c:
+        r = c.execute('SELECT nome, cnpj FROM empresas WHERE id=?', (eid,)).fetchone()
+        if not r:
+            return None
+        c.execute('DELETE FROM usuario_empresas WHERE empresa_id=?', (eid,))
+        c.execute('DELETE FROM chaves_saida WHERE cnpj=?', (r['cnpj'],))
+        c.execute('DELETE FROM dominio_envios WHERE cnpj=?', (r['cnpj'],))
+        c.execute('DELETE FROM dominio_empresa WHERE cnpj=?', (r['cnpj'],))
+        c.execute("DELETE FROM jobs WHERE escopo=? AND status='fila'", (r['cnpj'],))
+        c.execute('DELETE FROM empresas WHERE id=?', (eid,))
+    return r['nome'] or r['cnpj']
+
 # ---------- RBAC ----------
 def empresas_visiveis_ids(user):
     """IDs de empresas que o usuario pode ver. None = todas.
