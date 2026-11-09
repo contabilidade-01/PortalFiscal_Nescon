@@ -140,7 +140,7 @@ def test_excluir_cliente_exige_permissao():
     uid = _setup(carteiras=['Nescon'])
     cli = _cli(uid)
     assert b'cliente_excluir' not in cli.get('/clientes').data and b'/excluir' not in cli.get('/clientes').data
-    cli.post('/clientes/%d/excluir' % _id(NESCON))
+    cli.post('/clientes/%d/excluir' % _id(NESCON), data={'confirmar': '1'})
     assert _existe(NESCON)
 
 
@@ -149,7 +149,7 @@ def test_excluir_cliente_so_no_escopo():
     models.salvar_permissoes(uid, ['excluir_cliente'])
     cli = _cli(uid)
     assert b'/excluir' in cli.get('/clientes').data
-    cli.post('/clientes/%d/excluir' % _id(JEAN))
+    cli.post('/clientes/%d/excluir' % _id(JEAN), data={'confirmar': '1'})
     assert _existe(JEAN)
-    cli.post('/clientes/%d/excluir' % _id(NESCON))
+    cli.post('/clientes/%d/excluir' % _id(NESCON), data={'confirmar': '1'})
     assert not _existe(NESCON)
