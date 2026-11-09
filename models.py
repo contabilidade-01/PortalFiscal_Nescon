@@ -405,6 +405,7 @@ def init_db():
         _add_col(c, 'empresas', 'ultimo_bloqueio_motivo', 'ultimo_bloqueio_motivo TEXT')
         # Dominio: chave de envio obtida em activation/enable (cifrada)
         _add_col(c, 'dominio_empresa', 'chave_envio_cifrada', "chave_envio_cifrada TEXT DEFAULT ''")
+        _add_col(c, 'dominio_empresa', 'chave_info', 'chave_info TEXT')  # retorno de activation/info
         # admin inicial (senha vem de env em producao; local usa admin/admin)
         if not c.execute('SELECT 1 FROM usuarios LIMIT 1').fetchone():
             senha_inicial = os.environ.get('ADMIN_SENHA_INICIAL', 'admin')

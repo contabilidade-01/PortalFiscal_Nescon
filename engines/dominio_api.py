@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
 """Cliente da API Onvio / Dominio (Thomson Reuters) — envio de XML e consulta do lote.
 
-Documentacao (2026-11): https://developerportal.thomsonreuters.com/onvio-br-accounting-api
-  - Token:  POST https://auth.thomsonreuters.com/oauth/token
-  - Envio:  POST {API}/invoice/{versao}/batches   multipart: file[] (XML) + query (JSON)
-  - Lote:   GET  {API}/invoice/{versao}/batches/{id}
-  - Teste:  GET  {API}/status/v2/integration/info
-  - Chave:  POST {API}/integration/v1/activation/enable  (troca a chave do cliente, se exigido)
-
-NAO CONFIRMADO ate a Dominio responder (ver docs/DOMINIO.md): grant client_credentials,
-audience, versao v2/v3, header x-integration-key, troca da chave e a tabela de codigos.
-Tudo isso esta em variaveis de ambiente para ajustar sem mexer no codigo.
+Guia oficial "Documentacao Integracao API para ERPs" (suporte Dominio, solucao 8476), lido em
+2026-11-09:
+  1. Token:  POST https://auth.thomsonreuters.com/oauth/token  (Basic client_id:client_secret +
+             form grant_type=client_credentials, client_id, client_secret, audience). Vale 24 h;
+             gerar SO 1x ao dia e usar o MESMO token para todos os clientes (acima de 40
+             requisicoes a Dominio bloqueia a integracao).
+  2. Conferir a chave do cliente: GET {API}/integration/v1/activation/info  (Bearer + x-integration-key
+             = chave do contador) -> escritorio, cliente e CNPJ.
+  3. Gerar a integrationKey:      POST {API}/integration/v1/activation/enable (mesmos headers).
+  4. Envio:  POST {API}/invoice/v3/batches  (Bearer + x-integration-key = integrationKey; form-data
+             file[] XML, query {"boxeFile": false}). Nunca mandar a chave do contador aqui.
+  5. Consulta: GET {API}/invoice/v3/batches/{id}; "Arquivo armazenado na API" = sucesso.
+Ainda sem tabela oficial de codigos de erro: entra pela env DOMINIO_CODIGOS.
 DOMINIO_SIMULADO=1 troca a API por um simulador local (tela e fila sem credenciais).
 """
 import base64, json, os, threading, time
@@ -49,11 +52,32 @@ class DominioIncerto(DominioErro):
     """A conexao caiu DURANTE o envio: o lote pode ter sido criado. Nao reenviar sozinho."""
 
 
+TOKEN_MAX_DIA = 5  # o guia pede 1 token/dia; folga para reinicio/renovacao, nunca perto de 40
+
+
+def _credenciais_tela():
+    """Client ID/Secret cadastrados na tela (parametros; secret cifrado com DOMINIO_KEY)."""
+    try:
+        import models
+        from engines import dominio_fila
+        cid = models.get_param('dominio_client_id') or ''
+        sec = models.get_param('dominio_client_secret') or ''
+        return cid, (dominio_fila.decifrar(sec) if sec else '')
+    except Exception:
+        return '', ''
+
+
 def config():
     e = os.environ.get
+    cid, sec = e('DOMINIO_CLIENT_ID', ''), e('DOMINIO_CLIENT_SECRET', '')
+    origem = 'ambiente' if (cid and sec) else ''
+    if not origem:
+        cid, sec = _credenciais_tela()
+        origem = 'tela' if (cid and sec) else ''
     return {
-        'client_id': e('DOMINIO_CLIENT_ID', ''),
-        'client_secret': e('DOMINIO_CLIENT_SECRET', ''),
+        'client_id': cid,
+        'client_secret': sec,
+        'origem_credenciais': origem,
         # audience oficial do Onvio (pagina "Authenticating with OAuth 2.0"); "-" = nao enviar
         'audience': '' if e('DOMINIO_AUDIENCE', '') == '-' else e('DOMINIO_AUDIENCE', '') or AUDIENCE_ONVIO,
         'token_url': e('DOMINIO_TOKEN_URL', 'https://auth.thomsonreuters.com/oauth/token'),
@@ -78,6 +102,9 @@ def credenciais_ok(cfg=None):
 # Dominio mandar a tabela "Retornos de Protocolo". Codigo fora do mapa: consulta de novo
 # e, depois de muitas consultas, vira INCERTO (nunca CONFIRMADO por suposicao).
 CODIGOS_PADRAO = {'EA10': 'JA_EXISTENTE'}
+# Mensagens do guia oficial (o codigo da resposta v3 ainda nao foi documentado).
+MENSAGENS = (('armazenado na api', 'CONFIRMADO'),)
+AGUARDANDO = ('aguardando processamento',)
 
 
 def mapa_codigos():
@@ -103,9 +130,55 @@ def interpretar_lote(lote):
     if arquivos and isinstance(arquivos[0], dict):
         st = arquivos[0].get('apiStatus') or arquivos[0].get('boxeStatus')
     st = st or lote.get('status') or {}
+    if isinstance(st, str):
+        st = {'message': st}
     codigo = str((st or {}).get('code') or '').upper()
-    msg = str((st or {}).get('message') or '')[:300]
-    return mapa_codigos().get(codigo), codigo, msg
+    msg = str((st or {}).get('message') or lote.get('message') or '')[:300]
+    estado = mapa_codigos().get(codigo)
+    if not estado:
+        baixo = msg.lower()
+        if not any(a in baixo for a in AGUARDANDO):
+            estado = next((e for t, e in MENSAGENS if t in baixo), None)
+    return estado, codigo, msg
+
+
+def _token_salvo():
+    try:
+        import models
+        from engines import dominio_fila
+        tok, exp = models.get_param('dominio_token') or '', float(models.get_param('dominio_token_expira') or 0)
+        return (dominio_fila.decifrar(tok), exp) if tok and dominio_fila.cofre_ok() else ('', 0)
+    except Exception:
+        return '', 0
+
+
+def _guardar_token(tok, exp):
+    try:
+        import models
+        from engines import dominio_fila
+        if dominio_fila.cofre_ok():
+            models.set_param('dominio_token', dominio_fila.cifrar(tok) if tok else '')
+            models.set_param('dominio_token_expira', str(exp))
+    except Exception:
+        pass
+
+
+def tokens_hoje(incrementar=False):
+    """Quantos tokens foram pedidos hoje (controle do limite da Dominio)."""
+    import models
+    hoje = datetime.now().strftime('%Y-%m-%d')
+    dia, _, n = (models.get_param('dominio_token_contagem') or '').partition(':')
+    n = int(n) if dia == hoje and n.isdigit() else 0
+    if incrementar:
+        n += 1
+        models.set_param('dominio_token_contagem', '%s:%d' % (hoje, n))
+    return n
+
+
+def estado_token():
+    tok, exp = _token_salvo()
+    return {'valido_ate': datetime.fromtimestamp(exp).strftime('%d/%m/%Y %H:%M') if tok and exp > time.time() else '',
+            'pedidos_hoje': tokens_hoje()}
 
 
 class DominioClient:
@@ -113,7 +186,7 @@ class DominioClient:
         self.cfg = cfg or config()
         self.s = session or requests.Session()
         self.s.trust_env = False
-        self._token, self._expira = '', 0
+        self._token, self._expira = _token_salvo()
         self._lock = threading.Lock()
 
     # ---------- autenticacao ----------
@@ -123,9 +196,14 @@ class DominioClient:
                 return self._token
             if not credenciais_ok(self.cfg):
                 raise DominioPausar('Client ID / Client Secret da Domínio não configurados no servidor.')
-            dados = {'grant_type': 'client_credentials'}
+            if tokens_hoje() >= TOKEN_MAX_DIA:
+                raise DominioRepetir('Limite diário de tokens atingido (%d). A Domínio pede 1 token por dia; '
+                                     'nova tentativa mais tarde.' % TOKEN_MAX_DIA, espera=3600)
+            dados = {'grant_type': 'client_credentials', 'client_id': self.cfg['client_id'],
+                     'client_secret': self.cfg['client_secret']}
             if self.cfg['audience']:
                 dados['audience'] = self.cfg['audience']
+            tokens_hoje(incrementar=True)
             basic = base64.b64encode(('%s:%s' % (self.cfg['client_id'], self.cfg['client_secret'])).encode()).decode()
             try:
                 r = self.s.post(self.cfg['token_url'], data=dados, timeout=TIMEOUT,
@@ -142,7 +220,8 @@ class DominioClient:
             if not j.get('access_token'):
                 raise DominioRepetir('Autenticação sem access_token na resposta.')
             self._token = j['access_token']
-            self._expira = time.time() + int(j.get('expires_in') or 3600)
+            self._expira = time.time() + int(j.get('expires_in') or 86400)
+            _guardar_token(self._token, self._expira)
             return self._token
 
     def _headers(self, chave=None):
@@ -157,9 +236,14 @@ class DominioClient:
         r = self._req('GET', self.cfg['api_url'] + '/status/v2/integration/info', self._headers())
         return _json(r) if r.content else {'message': 'ok'}
 
+    def info_chave(self, chave_cliente):
+        """activation/info: escritorio, cliente e CNPJ da chave que o contador gerou."""
+        h = self._headers()
+        h[self.cfg['header_chave']] = chave_cliente
+        return _json(self._req('GET', self.cfg['api_url'] + '/integration/v1/activation/info', h))
+
     def ativar_chave(self, chave_cliente):
-        """Troca a chave do cliente pela chave de envio, se a Dominio exigir (DOMINIO_ATIVAR_CHAVE=1).
-        Formato da resposta ainda nao confirmado: aceita 'integrationKey' ou 'key'."""
+        """activation/enable: troca a chave do contador pela integrationKey (usada nos envios)."""
         h = self._headers()
         h[self.cfg['header_chave']] = chave_cliente
         r = self._req('POST', self.cfg['api_url'] + '/integration/v1/activation/enable', h)
@@ -198,7 +282,8 @@ class DominioClient:
                 raise DominioIncerto('A conexão caiu durante o envio. Confira na Domínio antes de reenviar.') from None
             raise DominioRepetir('Sem conexão com a API da Domínio.') from None
         if r.status_code == 401:
-            self._token = ''  # token pode ter expirado: renova na proxima
+            self._token, self._expira = '', 0  # token pode ter expirado: renova na proxima
+            _guardar_token('', 0)
             raise DominioPausar('API recusou o acesso (HTTP 401). Confira as credenciais.', 401)
         if r.status_code == 403:
             raise DominioPausar('Sem permissão na Domínio (HTTP 403). Confira a chave da empresa e a '
@@ -255,6 +340,9 @@ class SimuladorClient:
     def ativar_chave(self, chave_cliente):
         return chave_cliente
 
+    def info_chave(self, chave_cliente):
+        return {'simulado': True, 'message': 'Simulador: a chave não é conferida.'}
+
     def enviar(self, conteudo, nome_arquivo, chave):
         if not 0 < len(conteudo) <= LIMITE_BYTES:
             raise DominioRecusado('XML vazio ou acima de 2 MB.')
@@ -274,6 +362,7 @@ def cliente():
     global _cliente
     cfg = config()
     tipo = SimuladorClient if cfg['simulado'] else DominioClient
-    if not isinstance(_cliente, tipo):
-        _cliente = tipo(cfg)
+    if not isinstance(_cliente, tipo) or (tipo is DominioClient and (
+            _cliente.cfg['client_id'], _cliente.cfg['client_secret']) != (cfg['client_id'], cfg['client_secret'])):
+        _cliente = tipo(cfg)  # credenciais trocadas na tela: novo cliente (token salvo continua valendo)
     return _cliente

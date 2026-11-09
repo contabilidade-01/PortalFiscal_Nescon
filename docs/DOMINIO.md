@@ -1,6 +1,6 @@
 # Envio de XML para a Domínio (API Onvio)
 
-Estado em 2026-11-09: **fila, tela e cliente da API prontos; não testados contra a API real.**
+Estado em 2026-11-09: **fila, tela e cliente da API prontos e alinhados ao guia oficial; não testados contra a API real.**
 Faltam o `client_id`/`client_secret` do integrador (pedidos a `api.dominio@thomsonreuters.com`)
 e as respostas às dúvidas abaixo.
 
@@ -34,23 +34,50 @@ XML/<cnpj>/<AAAA-MM>/<doc>/<sub>/  →  varrer()  →  tabela dominio_envios  �
 | INCERTO | Pode ter chegado: conferir na Domínio antes de reenviar |
 | FORA_PERIODO | Antes da data inicial da empresa |
 
-## Verificado na API real (2026-11-09, sem credencial)
-- Rotas `invoice/v2/batches` e `invoice/v3/batches` existem (versão inexistente dá 404).
-- `status/v2/integration/info` e `integration/v1/activation/enable` existem.
-- **Toda rota exige o token do integrador**, inclusive a ativação: só a chave do cliente não basta.
-- O endpoint de token aceita o formato `client_credentials` (credencial falsa → `access_denied`).
-- `integration/v2/client/info` (doc pública) não existe mais (404); o código não usa.
+## Guia oficial da Domínio (solução 8476, lido em 2026-11-09)
+Fonte: https://suporte.dominioatendimento.com/central/faces/solucao.html?codigo=8476
 
-## A confirmar com a Domínio (tudo ajustável por env, sem mudar código)
-| Dúvida | Env | Padrão hoje |
+1. **Cadastro do ERP:** feito no site da Domínio ("Integração online com qualquer ERP"). O
+   Client ID/Secret é exclusivo do ERP (o Portal Fiscal) e não é a chave do cliente.
+2. **Token:** `POST https://auth.thomsonreuters.com/oauth/token`, Basic `client_id:client_secret`,
+   form `grant_type=client_credentials`, `client_id`, `client_secret`,
+   `audience=409f91f6-dc17-44c8-a5d8-e0a1bafd8b67`. Vale 24 h. **Gerar 1x ao dia** e usar o mesmo
+   token para todos os clientes. Consumo excessivo (acima de 40) bloqueia a integração.
+   → O portal guarda o token cifrado no banco (sobrevive a deploy) e limita a 5 pedidos/dia.
+3. **Conferir a chave do cliente:** `GET .../integration/v1/activation/info` com Bearer +
+   `x-integration-key` = chave do contador → escritório, cliente e CNPJ.
+   → O portal confere antes de ativar e **pausa** se o CNPJ for de outra empresa.
+4. **Gerar a integrationKey:** `POST .../integration/v1/activation/enable` (mesmos headers).
+   → Feito 1x por empresa; a integrationKey fica cifrada e é reusada.
+5. **Envio:** `POST .../invoice/v3/batches`, Bearer + `x-integration-key` = **integrationKey**
+   (nunca a chave do contador); form-data `file[]` (XML), `query` `{"boxeFile": false}`
+   (`true` só se o escritório tem BOX-e contratado), `fileComplement[]` opcional.
+   Resposta: "Aguardando processamento".
+6. **Consulta:** `GET .../invoice/v3/batches/{id}` com os mesmos headers.
+   "Arquivo armazenado na API" = sucesso → estado CONFIRMADO.
+7. **TLS:** 1.3 (ou 1.2 com ECDHE-GCM/CHACHA20) — o Python/OpenSSL da imagem atende.
+8. **Homologação:** pedir à Domínio (e-mail ou WhatsApp da API) uma chave de homologação,
+   informando um CNPJ de exemplo.
+
+O código extraído do EXE CentralNFSe **não** usa Client ID/Secret: ele dizia "no Domínio OAuth
+credentials in the EXE" e mandava os XMLs a um gateway na AWS, onde ficava a credencial. O
+Portal Fiscal faz o papel desse gateway, direto do servidor.
+
+## Verificado na API real (2026-11-09, sem credencial)
+- Rotas `invoice/v2|v3/batches`, `status/v2/integration/info` e `integration/v1/activation/*`
+  existem; todas exigem token (só a chave do cliente não basta).
+
+## Ainda sem documentação oficial
+| Item | Env | Hoje |
 |---|---|---|
-| Grant `client_credentials` e `audience` | `DOMINIO_AUDIENCE` | audience oficial `409f91f6-…` (`-` desliga) |
-| Versão do envio (v2 público × v3 do guia) | `DOMINIO_INVOICE_VERSAO` | `v3` |
-| Nome do header da chave | `DOMINIO_HEADER_CHAVE` | `x-integration-key` |
-| Trocar a chave em `activation/enable`? | `DOMINIO_ATIVAR_CHAVE` | `1`: troca 1x por empresa, guarda cifrada e reusa; trocar a chave na tela refaz |
-| `boxeFile` | `DOMINIO_BOXE_FILE` | `0` |
-| Tabela de códigos de retorno | `DOMINIO_CODIGOS` (JSON código→estado) | só `EA10`=JA_EXISTENTE |
+| Códigos de erro do lote (só as mensagens de sucesso/aguardando estão no guia) | `DOMINIO_CODIGOS` (JSON código→estado) | `EA10`=JA_EXISTENTE |
 | NFS-e Padrão Nacional aceita sem conversão? | — | enviado como está |
+| O limite "acima de 40" é de tokens ou de todas as requisições? | `DOMINIO_LOTE_CICLO`, `DOMINIO_INTERVALO_SEG` | 5 XML a cada 15 s |
+
+## Credenciais
+Admin → Envio Domínio → "Credenciais do integrador": Client ID e Client Secret (secret cifrado
+com `DOMINIO_KEY`). As variáveis `DOMINIO_CLIENT_ID`/`DOMINIO_CLIENT_SECRET` do EasyPanel, se
+existirem, têm prioridade.
 
 Enquanto a tabela de códigos não vier, **nenhum lote vira CONFIRMADO**: fica ENVIADO e, depois de
 40 consultas sem código conhecido, vira INCERTO.

@@ -36,7 +36,8 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
   <p class="desc">O servidor percorre os XMLs baixados, envia cada nota pela API Onvio com a chave da empresa e consulta o resultado. Notas antes da data inicial da empresa ficam de fora. Cancelamentos só saem depois que a nota original foi aceita.</p>
   <div class="dm-status">
     {% if simulado %}<span class="tag bad">SIMULADOR — nada é enviado à Domínio</span>{% endif %}
-    <span class="tag {{ 'good' if credenciais else 'bad' }}">Client ID/Secret: {{ 'configurados' if credenciais else 'faltando' }}</span>
+    <span class="tag {{ 'good' if credenciais else 'bad' }}">Client ID/Secret: {{ ('configurados (' ~ origem_cred ~ ')') if credenciais and not simulado else ('simulador' if simulado else 'faltando') }}</span>
+    <span class="tag {{ 'good' if token.valido_ate }}">Token: {{ ('válido até ' ~ token.valido_ate) if token.valido_ate else 'não gerado' }} · {{ token.pedidos_hoje }}/{{ token_max }} hoje</span>
     <span class="tag {{ 'good' if cofre else 'bad' }}">Cofre das chaves (DOMINIO_KEY): {{ 'ok' if cofre else 'faltando' }}</span>
     <span class="tag {{ 'good' if env_ativo else 'bad' }}">Servidor (DOMINIO_ENVIO_ATIVO): {{ 'habilitado' if env_ativo else 'desabilitado' }}</span>
     <span class="tag {{ 'good' if ligado else '' }}">Envio: {{ 'LIGADO' if ligado else 'desligado' }}</span>
@@ -64,6 +65,23 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
   {% if not env_ativo %}<p class="hint">Com <code>DOMINIO_ENVIO_ATIVO</code> desligado no servidor, a fila só é montada pelo botão acima; nada é enviado.</p>{% endif %}
   {% endif %}
 </div>
+
+{% if papel_atual == 'admin' %}
+<div class="card" id="credenciais">
+  <h2>Credenciais do integrador (Domínio)</h2>
+  <p class="desc">Client ID e Client Secret são fornecidos pela Domínio e são exclusivos do Portal Fiscal (não são as chaves dos clientes). O secret fica cifrado no servidor. O token é gerado <b>uma vez por dia</b> e vale para todos os clientes, como pede o guia oficial.</p>
+  {% if origem_cred == 'ambiente' %}
+  <p class="hint">As credenciais estão nas variáveis do EasyPanel (<code>DOMINIO_CLIENT_ID</code>/<code>DOMINIO_CLIENT_SECRET</code>) e têm prioridade sobre esta tela.</p>
+  {% endif %}
+  <form method="post" action="{{ url_for('dominio_credenciais') }}" class="dm-form">
+    <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <label>Client ID <input name="client_id" value="{{ client_id if origem_cred == 'tela' else '' }}" autocomplete="off" style="width:280px"></label>
+    <label>Client Secret <input type="password" name="client_secret" placeholder="{{ 'salvo; deixe em branco para manter' if origem_cred == 'tela' else '' }}" autocomplete="new-password" style="width:260px"></label>
+    <button class="btn btn-primary" {% if not cofre %}disabled title="Defina DOMINIO_KEY no servidor"{% endif %}>Salvar</button>
+    {% if origem_cred == 'tela' %}<button class="btn btn-ghost" name="apagar" value="1" onclick="return confirm('Apagar as credenciais da Domínio desta tela?')">Apagar</button>{% endif %}
+  </form>
+</div>
+{% endif %}
 
 <div class="card">
   <h2>Envios</h2>
@@ -112,7 +130,7 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
 
 <div class="card" id="empresas">
   <h2>Empresas</h2>
-  <p class="desc">A chave é a gerada no Onvio (API → Chave → Nova Habilitação, com “Notas fiscais” marcado). Ela fica cifrada no servidor; depois de salva, a tela só mostra se está cadastrada.</p>
+  <p class="desc">A chave é a gerada pelo contador no <a href="https://onvio.com.br/br-api-integration/#/enable-clients" target="_blank" rel="noopener noreferrer">portal Onvio</a> (aba Chave → Nova habilitação, com “Notas fiscais” marcado), uma por CNPJ e sem vencimento. Antes do primeiro envio o sistema confere na Domínio se a chave é deste CNPJ e gera a integrationKey. Ela fica cifrada no servidor; depois de salva, a tela só mostra se está cadastrada.</p>
   {% if papel_atual == 'admin' %}
   <details class="dm-imp" style="margin-bottom:12px">
     <summary>Importar chaves em lote</summary>
@@ -130,13 +148,19 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
   </details>
   {% endif %}
   <div class="tbl-wrap"><table style="min-width:900px">
-    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Chave</th><th>Envio</th>{% if papel_atual=='admin' %}<th>Editar</th>{% endif %}</tr></thead>
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Chave</th><th>Conferência na Domínio</th><th>Envio</th>{% if papel_atual=='admin' %}<th>Editar</th>{% endif %}</tr></thead>
     <tbody>
     {% for e in empresas %}
     <tr>
       <td class="empresa-nome">{{ (e['nome'] or '')|title }}</td>
       <td class="mono">{{ e['cnpj'] }}</td>
-      <td>{% if e['tem_chave'] %}<span class="pill on dot">cadastrada</span>{% else %}<span class="tag">sem chave</span>{% endif %}</td>
+      <td>{% if e['tem_chave'] %}<span class="pill on dot">cadastrada</span>{% if e['ativada'] %} <span class="tag">ativada</span>{% endif %}{% else %}<span class="tag">sem chave</span>{% endif %}</td>
+      <td class="dm-msg">{{ resumo_info(e['chave_info']) or '—' }}
+        {% if papel_atual=='admin' and e['tem_chave'] %}
+        <form method="post" action="{{ url_for('dominio_conferir') }}" style="display:inline">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}"><input type="hidden" name="cnpj" value="{{ e['cnpj'] }}">
+          <button class="btn sm btn-ghost" {% if not credenciais %}disabled title="Cadastre o Client ID/Secret"{% endif %}>Conferir</button>
+        </form>{% endif %}</td>
       <td>{% if e['ativo'] %}<span class="pill on dot">desde {{ e['data_inicial'] }}</span>{% else %}<span class="muted">desligado</span>{% endif %}</td>
       {% if papel_atual=='admin' %}
       <td>
@@ -152,7 +176,7 @@ details.dm-imp summary{cursor:pointer;font-weight:600}
       </td>
       {% endif %}
     </tr>
-    {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">Nenhuma empresa ativa.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:20px">Nenhuma empresa ativa.</td></tr>{% endfor %}
     </tbody>
   </table></div>
 </div>
