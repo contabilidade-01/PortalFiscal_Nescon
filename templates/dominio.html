@@ -1,0 +1,159 @@
+{% extends 'base.html' %}
+{% block titulo %}Envio Domínio{% endblock %}
+{% block corpo %}
+<style>
+.dm-status{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 10px}
+.dm-status .tag.bad{background:#fdecec;color:#b42318}
+.dm-status .tag.good{background:#e7f8f0;color:#067647}
+.dm-acoes{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.dm-acoes form{display:inline}
+.dm-filtros{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.dm-filtros a{font-size:12.5px}
+.dm-estado{font-weight:700;font-size:12px;padding:2px 8px;border-radius:999px;background:var(--surface2);white-space:nowrap}
+.dm-estado.CONFIRMADO,.dm-estado.JA_EXISTENTE{background:#e7f8f0;color:#067647}
+.dm-estado.RECUSADO,.dm-estado.INCERTO{background:#fdecec;color:#b42318}
+.dm-estado.PAUSADO{background:#fff4e5;color:#b54708}
+.dm-estado.ENVIADO,.dm-estado.ENVIANDO,.dm-estado.NOVO,.dm-estado.REPETIR{background:#eef0fe;color:#4f46e5}
+.dm-msg{font-size:12px;color:var(--muted);max-width:360px}
+.dm-form{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.dm-form input[type=date]{width:150px}
+.dm-form input[type=password]{width:180px}
+.hint{font-size:12px;color:var(--muted);margin-top:6px}
+details.dm-imp summary{cursor:pointer;font-weight:600}
+</style>
+
+<div class="kpis">
+  {% for k in ['NOVO','ENVIADO','CONFIRMADO','JA_EXISTENTE','RECUSADO','INCERTO','PAUSADO'] %}
+  <a class="kpi" style="text-decoration:none" href="{{ url_for('dominio', estado=k) }}">
+    <div class="val">{{ resumo.get(k, 0) + (resumo.get('REPETIR',0) if k=='NOVO' else 0) + (resumo.get('ENVIANDO',0) if k=='ENVIADO' else 0) }}</div>
+    <div class="lab">{{ rotulos[k] }}</div>
+  </a>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Envio de XML para a Domínio</h2>
+  <p class="desc">O servidor percorre os XMLs baixados, envia cada nota pela API Onvio com a chave da empresa e consulta o resultado. Notas antes da data inicial da empresa ficam de fora. Cancelamentos só saem depois que a nota original foi aceita.</p>
+  <div class="dm-status">
+    {% if simulado %}<span class="tag bad">SIMULADOR — nada é enviado à Domínio</span>{% endif %}
+    <span class="tag {{ 'good' if credenciais else 'bad' }}">Client ID/Secret: {{ 'configurados' if credenciais else 'faltando' }}</span>
+    <span class="tag {{ 'good' if cofre else 'bad' }}">Cofre das chaves (DOMINIO_KEY): {{ 'ok' if cofre else 'faltando' }}</span>
+    <span class="tag {{ 'good' if env_ativo else 'bad' }}">Servidor (DOMINIO_ENVIO_ATIVO): {{ 'habilitado' if env_ativo else 'desabilitado' }}</span>
+    <span class="tag {{ 'good' if ligado else '' }}">Envio: {{ 'LIGADO' if ligado else 'desligado' }}</span>
+    <span class="tag">API invoice {{ versao }}</span>
+    <span class="tag">{{ ativas }} empresa(s) ativas · {{ com_chave }} com chave</span>
+  </div>
+  {% if worker.erro %}<p class="flash erro">Último erro do envio: {{ worker.erro }}</p>{% endif %}
+  {% if worker.ciclo %}<p class="hint">Último ciclo: {{ worker.ciclo }}</p>{% endif %}
+  {% if papel_atual == 'admin' %}
+  <div class="dm-acoes">
+    <form method="post" action="{{ url_for('dominio_ligar') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <input type="hidden" name="ligar" value="{{ '0' if ligado else '1' }}">
+      <button class="btn {{ 'btn-ghost' if ligado else 'btn-primary' }}" {% if not ligado and not (credenciais and cofre) %}disabled title="Configure credenciais e DOMINIO_KEY"{% endif %}>{{ 'Desligar envio' if ligado else 'Ligar envio' }}</button>
+    </form>
+    <form method="post" action="{{ url_for('dominio_testar') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn btn-ghost">Testar conexão</button>
+    </form>
+    <form method="post" action="{{ url_for('dominio_varrer') }}">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <button class="btn btn-ghost">Procurar XMLs novos agora</button>
+    </form>
+  </div>
+  {% if not env_ativo %}<p class="hint">Com <code>DOMINIO_ENVIO_ATIVO</code> desligado no servidor, a fila só é montada pelo botão acima; nada é enviado.</p>{% endif %}
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Envios</h2>
+  <div class="dm-filtros">
+    <a class="tag {{ 'on' if not filtro_estado }}" href="{{ url_for('dominio', cnpj=filtro_cnpj) }}">Todos ({{ resumo.values()|sum }})</a>
+    {% for k, n in resumo.items() %}
+    <a class="tag" href="{{ url_for('dominio', estado=k, cnpj=filtro_cnpj) }}" style="{{ 'outline:2px solid var(--brand1)' if filtro_estado==k }}">{{ rotulos.get(k,k) }} ({{ n }})</a>
+    {% endfor %}
+    {% if filtro_cnpj %}<a class="tag" href="{{ url_for('dominio', estado=filtro_estado) }}">✕ empresa {{ filtro_cnpj }}</a>{% endif %}
+  </div>
+  <div class="tbl-wrap"><table style="min-width:980px">
+    <thead><tr><th>Atualizado</th><th>Empresa</th><th>Documento</th><th>Emissão</th><th>Estado</th><th>Retorno</th><th></th></tr></thead>
+    <tbody>
+    {% for d in envios %}
+    <tr>
+      <td class="muted" style="white-space:nowrap">{{ d['atualizado'] }}</td>
+      <td class="empresa-nome"><a href="{{ url_for('dominio', cnpj=d['cnpj'], estado=filtro_estado) }}">{{ (d['nome'] or d['cnpj'])|title }}</a></td>
+      <td><span class="tag">{{ d['doc'] }}</span> {% if d['tipo']=='cancelamento' %}<span class="tag sai">cancelamento</span>{% endif %}
+        <div class="mono" style="font-size:11px">{{ d['chave'] or d['arquivo'] }}</div></td>
+      <td class="muted">{{ d['emissao'] or d['competencia'] }}</td>
+      <td><span class="dm-estado {{ d['estado'] }}">{{ rotulos.get(d['estado'], d['estado']) }}</span>
+        {% if d['tentativas'] %}<div class="muted" style="font-size:11px">{{ d['tentativas'] }} tentativa(s)</div>{% endif %}</td>
+      <td class="dm-msg">{% if d['codigo'] %}<b class="mono">{{ d['codigo'] }}</b> {% endif %}{{ d['mensagem'] or '' }}
+        {% if d['lote_id'] %}<div class="mono" style="font-size:10.5px">lote {{ d['lote_id'] }}</div>{% endif %}</td>
+      <td>
+        {% if d['estado'] in ['RECUSADO','PAUSADO','REPETIR','INCERTO'] %}
+        <form method="post" action="{{ url_for('dominio_reenviar', eid=d['id'], estado=filtro_estado, cnpj=filtro_cnpj) }}" class="dm-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          {% if d['estado']=='INCERTO' %}<label style="font-size:11.5px"><input type="checkbox" name="conferido" value="1"> conferi: não chegou</label>{% endif %}
+          <button class="btn sm btn-ghost">Reenviar</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="7" class="muted" style="text-align:center;padding:26px">Nenhum envio ainda. Cadastre a chave e a data inicial das empresas abaixo e clique em “Procurar XMLs novos agora”.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% if paginas > 1 %}
+  <p class="hint">Página {{ pagina }} de {{ paginas }} ·
+    {% if pagina > 1 %}<a href="{{ url_for('dominio', estado=filtro_estado, cnpj=filtro_cnpj, p=pagina-1) }}">← anterior</a>{% endif %}
+    {% if pagina < paginas %}<a href="{{ url_for('dominio', estado=filtro_estado, cnpj=filtro_cnpj, p=pagina+1) }}">próxima →</a>{% endif %}</p>
+  {% endif %}
+</div>
+
+<div class="card" id="empresas">
+  <h2>Empresas</h2>
+  <p class="desc">A chave é a gerada no Onvio (API → Chave → Nova Habilitação, com “Notas fiscais” marcado). Ela fica cifrada no servidor; depois de salva, a tela só mostra se está cadastrada.</p>
+  {% if papel_atual == 'admin' %}
+  <details class="dm-imp" style="margin-bottom:12px">
+    <summary>Importar chaves em lote</summary>
+    <form method="post" action="{{ url_for('dominio_importar') }}" enctype="multipart/form-data" style="margin-top:8px">
+      <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+      <p class="hint">Uma linha por empresa: <code>CNPJ;chave</code> ou <code>CNPJ;chave;AAAA-MM-DD</code>. Aceita arquivo CSV ou texto colado.</p>
+      <textarea name="texto" rows="5" style="width:100%" placeholder="12345678000195;chave-da-empresa"></textarea>
+      <div class="dm-form" style="margin-top:6px">
+        <input type="file" name="arquivo" accept=".csv,.txt">
+        <label>Data inicial padrão <input type="date" name="data_inicial"></label>
+        <label><input type="checkbox" name="ligar" value="1"> ligar o envio dessas empresas</label>
+        <button class="btn btn-primary" {% if not cofre %}disabled title="Defina DOMINIO_KEY no servidor"{% endif %}>Importar</button>
+      </div>
+    </form>
+  </details>
+  {% endif %}
+  <div class="tbl-wrap"><table style="min-width:900px">
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Chave</th><th>Envio</th>{% if papel_atual=='admin' %}<th>Editar</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for e in empresas %}
+    <tr>
+      <td class="empresa-nome">{{ (e['nome'] or '')|title }}</td>
+      <td class="mono">{{ e['cnpj'] }}</td>
+      <td>{% if e['tem_chave'] %}<span class="pill on dot">cadastrada</span>{% else %}<span class="tag">sem chave</span>{% endif %}</td>
+      <td>{% if e['ativo'] %}<span class="pill on dot">desde {{ e['data_inicial'] }}</span>{% else %}<span class="muted">desligado</span>{% endif %}</td>
+      {% if papel_atual=='admin' %}
+      <td>
+        <form method="post" action="{{ url_for('dominio_empresa') }}" class="dm-form">
+          <input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+          <input type="hidden" name="cnpj" value="{{ e['cnpj'] }}">
+          <input type="password" name="chave" placeholder="{{ 'trocar chave' if e['tem_chave'] else 'colar chave' }}" autocomplete="off">
+          <input type="date" name="data_inicial" value="{{ e['data_inicial'] or '' }}">
+          <label><input type="checkbox" name="ativo" value="1" {{ 'checked' if e['ativo'] }}> enviar</label>
+          {% if e['tem_chave'] %}<label class="muted"><input type="checkbox" name="limpar_chave" value="1"> apagar chave</label>{% endif %}
+          <button class="btn sm btn-ghost">Salvar</button>
+        </form>
+      </td>
+      {% endif %}
+    </tr>
+    {% else %}<tr><td colspan="5" class="muted" style="text-align:center;padding:20px">Nenhuma empresa ativa.</td></tr>{% endfor %}
+    </tbody>
+  </table></div>
+</div>
+{% endblock %}

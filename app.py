@@ -18,6 +18,7 @@ from engines import backup as bak
 from engines import importar_xml
 from engines import mail as mailer
 from engines import guard
+from engines import dominio_api, dominio_fila
 import time
 from collections import defaultdict
 
@@ -43,6 +44,7 @@ if os.environ.get('TRUST_PROXY', os.environ.get('FLASK_HTTPS')) == '1':
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 models.init_db()
 worker.iniciar_worker()  # motor de jobs em background (roda mesmo sem usuario logado)
+dominio_fila.iniciar()   # envio de XML a Dominio (so com DOMINIO_ENVIO_ATIVO=1)
 
 @app.route('/live')
 def live():
@@ -2015,6 +2017,137 @@ def sefaz_rearmar(cnpj, servico):
     guard.rearmar(cnpj, servico, quem=session.get('nome') or session.get('uid'))
     flash('Circuito rearmado: %s / %s.' % (cnpj, servico), 'ok')
     return redirect(url_for('sefaz_saude'))
+
+# ---- Integracao Dominio (envio de XML pela API Onvio) ----
+def _csrf_token():
+    if '_csrf' not in session:
+        session['_csrf'] = secrets.token_urlsafe(24)
+    return session['_csrf']
+
+app.jinja_env.globals['csrf_token'] = _csrf_token
+
+def _csrf_ok():
+    t = request.form.get('_csrf', '')
+    return bool(t) and secrets.compare_digest(t, session.get('_csrf', ''))
+
+def _dominio_cnpjs():
+    """CNPJs que o usuario ve na tela da Dominio. None = todos."""
+    vis = _cnpjs_visiveis()
+    return None if vis is None else sorted(vis)
+
+@app.route('/dominio')
+@perm_required('dominio_envio')
+def dominio():
+    cnpjs = _dominio_cnpjs()
+    estado = request.args.get('estado', ''); cnpj = request.args.get('cnpj', '')
+    pagina = max(1, request.args.get('p', 1, type=int))
+    where, args = [], []
+    if cnpjs is not None:
+        where.append('d.cnpj IN (%s)' % (','.join('?' * len(cnpjs)) or "''")); args += cnpjs
+    if estado in dominio_fila.ESTADOS:
+        where.append('d.estado=?'); args.append(estado)
+    if cnpj:
+        where.append('d.cnpj=?'); args.append(cnpj)
+    w = (' WHERE ' + ' AND '.join(where)) if where else ''
+    with models.con() as c:
+        total = c.execute('SELECT COUNT(*) FROM dominio_envios d' + w, args).fetchone()[0]
+        envios = c.execute('SELECT d.*, e.nome FROM dominio_envios d LEFT JOIN empresas e ON e.cnpj=d.cnpj'
+                           + w + ' ORDER BY d.atualizado DESC, d.id DESC LIMIT 50 OFFSET ?',
+                           args + [(pagina - 1) * 50]).fetchall()
+        empresas = c.execute('''SELECT e.cnpj, e.nome, e.carteira, COALESCE(d.ativo,0) ativo, d.data_inicial,
+                                       CASE WHEN COALESCE(d.chave_cifrada,'')!='' THEN 1 ELSE 0 END tem_chave
+                                FROM empresas e LEFT JOIN dominio_empresa d ON d.cnpj=e.cnpj
+                                WHERE e.ativo=1 ORDER BY COALESCE(d.ativo,0) DESC, e.nome''').fetchall()
+    if cnpjs is not None:
+        empresas = [e for e in empresas if e['cnpj'] in set(cnpjs)]
+    cfg = dominio_api.config()
+    return render_template('dominio.html', envios=envios, empresas=empresas, total=total, pagina=pagina,
+                           paginas=max(1, (total + 49) // 50), filtro_estado=estado, filtro_cnpj=cnpj,
+                           resumo=dominio_fila.resumo(cnpjs), rotulos=dominio_fila.ROTULOS,
+                           ligado=models.get_param('dominio_envio_ligado') == '1',
+                           env_ativo=os.environ.get('DOMINIO_ENVIO_ATIVO', '0') == '1',
+                           credenciais=dominio_api.credenciais_ok(cfg), simulado=cfg['simulado'],
+                           cofre=dominio_fila.cofre_ok(), versao=cfg['versao'],
+                           worker=dominio_fila.estado_worker(),
+                           ativas=sum(1 for e in empresas if e['ativo']),
+                           com_chave=sum(1 for e in empresas if e['tem_chave']))
+
+@app.route('/dominio/ligar', methods=['POST'])
+@admin_required
+def dominio_ligar():
+    if not _csrf_ok(): abort(400)
+    ligar = request.form.get('ligar') == '1'
+    models.set_param('dominio_envio_ligado', '1' if ligar else '0')
+    flash('Envio à Domínio %s.' % ('LIGADO' if ligar else 'desligado'), 'ok')
+    return redirect(url_for('dominio'))
+
+@app.route('/dominio/empresa', methods=['POST'])
+@admin_required
+def dominio_empresa():
+    if not _csrf_ok(): abort(400)
+    f = request.form
+    try:
+        dominio_fila.salvar_empresa(f.get('cnpj', ''), ativo=bool(f.get('ativo')),
+                                    data_inicial=f.get('data_inicial', ''), chave=f.get('chave', '').strip(),
+                                    limpar_chave=bool(f.get('limpar_chave')))
+        flash('Empresa %s atualizada.' % f.get('cnpj', ''), 'ok')
+    except ValueError as e:
+        flash(str(e), 'erro')
+    return redirect(url_for('dominio') + '#empresas')
+
+@app.route('/dominio/importar', methods=['POST'])
+@admin_required
+def dominio_importar():
+    if not _csrf_ok(): abort(400)
+    texto = request.form.get('texto', '')
+    arq = request.files.get('arquivo')
+    if arq and arq.filename:
+        texto += '\n' + arq.read().decode('utf-8-sig', 'ignore')
+    data = request.form.get('data_inicial', '') or None
+    try:
+        if data:
+            datetime.strptime(data, '%Y-%m-%d')
+        ok, erros = dominio_fila.importar_chaves(texto, data_inicial=data, ligar=bool(request.form.get('ligar')))
+    except ValueError as e:
+        flash(str(e), 'erro')
+        return redirect(url_for('dominio') + '#empresas')
+    flash('%d chave(s) gravada(s).%s' % (ok, (' Erros: ' + ' | '.join(erros[:8])) if erros else ''),
+          'erro' if erros else 'ok')
+    return redirect(url_for('dominio') + '#empresas')
+
+@app.route('/dominio/testar', methods=['POST'])
+@admin_required
+def dominio_testar():
+    if not _csrf_ok(): abort(400)
+    try:
+        r = dominio_api.cliente().testar()
+        flash('Conexão com a Domínio OK: %s' % str(r.get('message') or r)[:200], 'ok')
+    except dominio_api.DominioErro as e:
+        flash('Falha no teste: %s' % e, 'erro')
+    return redirect(url_for('dominio'))
+
+@app.route('/dominio/varrer', methods=['POST'])
+@admin_required
+def dominio_varrer():
+    if not _csrf_ok(): abort(400)
+    n = dominio_fila.varrer()
+    flash('%d XML(s) novo(s) entraram na fila da Domínio.' % n, 'ok')
+    return redirect(url_for('dominio'))
+
+@app.route('/dominio/envio/<int:eid>/reenviar', methods=['POST'])
+@perm_required('dominio_envio')
+def dominio_reenviar(eid):
+    if not _csrf_ok(): abort(400)
+    with models.con() as c:
+        d = c.execute('SELECT cnpj FROM dominio_envios WHERE id=?', (eid,)).fetchone()
+    if not d or not _pode_ver_cnpj(d['cnpj']):
+        abort(404)
+    try:
+        dominio_fila.pedir_reenvio(eid, conferido=bool(request.form.get('conferido')))
+        flash('Reenvio agendado.', 'ok')
+    except ValueError as e:
+        flash(str(e), 'erro')
+    return redirect(url_for('dominio', estado=request.args.get('estado', ''), cnpj=request.args.get('cnpj', '')))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=CFG.get('porta', 5001), debug=False)

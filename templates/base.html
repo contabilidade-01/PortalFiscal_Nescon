@@ -158,7 +158,7 @@ svg{display:block}
   {% set g_fiscal = ep in ['dashboard','clientes','certificados','downloads','cliente_novo','cliente_editar','ambiente','parametros_captura'] %}
   {% set amb_atual = (request.view_args or {}).get('chave') if ep=='ambiente' else None %}
   {% set g_analises = ep in ['fiscal_conferencia','fiscal_faturamento','fiscal_auditoria','fiscal_economia','fiscal_economia_mensuracao','fiscal_economia_st','das'] %}
-  {% set g_admin = ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup','sefaz_saude','sefaz_rearmar'] or (ep and ep.startswith('usuario')) %}
+  {% set g_admin = (ep and ep.startswith('dominio')) or ep in ['execucoes','execucao_nova','protocolos','configuracoes','backup','sefaz_saude','sefaz_rearmar'] or (ep and ep.startswith('usuario')) %}
   <nav class="topnav">
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_fiscal }}">Fiscal <span class="car">▼</span></button>
@@ -197,7 +197,7 @@ svg{display:block}
       </div>
     </div>
     {% endif %}
-    {% if papel_atual == 'admin' or tem_perm('ver_execucoes') or tem_perm('ver_protocolos') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
+    {% if papel_atual == 'admin' or tem_perm('ver_execucoes') or tem_perm('ver_protocolos') or tem_perm('dominio_envio') or tem_perm('exec_completo') or tem_perm('exec_nfe_entradas') or tem_perm('exec_nfse') or tem_perm('exec_nfce') or tem_perm('exec_ciencia') %}
     <div class="navgroup" tabindex="0">
       <button class="navbtn {{ 'active' if g_admin }}">{{ 'Admin' if papel_atual=='admin' else 'Operação' }} <span class="car">▼</span></button>
       <div class="submenu">
@@ -210,6 +210,9 @@ svg{display:block}
         {% endif %}
         {% if papel_atual=='admin' or tem_perm('ver_protocolos') %}
         <a href="{{ url_for('protocolos') }}" class="{{ 'active' if ep=='protocolos' }}">Protocolos</a>
+        {% endif %}
+        {% if papel_atual=='admin' or tem_perm('dominio_envio') %}
+        <a href="{{ url_for('dominio') }}" class="{{ 'active' if ep and ep.startswith('dominio') }}">Envio Domínio</a>
         {% endif %}
         {% if papel_atual == 'admin' %}
         <a href="{{ url_for('configuracoes') }}" class="{{ 'active' if ep=='configuracoes' }}">Configurações</a>

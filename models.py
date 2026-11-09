@@ -27,6 +27,7 @@ PERMISSOES = [
     ('parametros_captura', 'Marcar parâmetros de captura (só empresas do escopo)'),
     ('excluir_cliente', 'Excluir cadastro de cliente (só empresas do escopo)'),
     ('importar_xml', 'Importar XML de vendas — NF-e e NFC-e (só empresas do escopo)'),
+    ('dominio_envio', 'Acompanhar envios à Domínio e pedir reenvio (só empresas do escopo)'),
 ]
 PERM_KEYS = frozenset(k for k, _ in PERMISSOES)
 
@@ -316,6 +317,43 @@ def init_db():
           tentativas INTEGER DEFAULT 0,
           criado TEXT, atualizado TEXT, detalhe TEXT);
         CREATE INDEX IF NOT EXISTS idx_chaves_saida_cnpj ON chaves_saida(cnpj, status);
+
+        -- Integracao Dominio (API Onvio): parametros por empresa. A chave de integracao
+        -- fica cifrada (Fernet, env DOMINIO_KEY); a tela so mostra se esta cadastrada.
+        CREATE TABLE IF NOT EXISTS dominio_empresa(
+          cnpj TEXT PRIMARY KEY,
+          ativo INTEGER DEFAULT 0,
+          data_inicial TEXT,                -- AAAA-MM-DD: so envia emissao >= esta data
+          chave_cifrada TEXT DEFAULT '',
+          atualizado TEXT);
+
+        -- Catalogo de envios: 1 linha por XML (cnpj + doc + nome do arquivo). O nome nao
+        -- muda quando a nota vai de 04_saida para 09_cancelada; o caminho e atualizado.
+        CREATE TABLE IF NOT EXISTS dominio_envios(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          cnpj TEXT NOT NULL,
+          doc TEXT NOT NULL,                -- NFe | NFSe | NFCe
+          sub TEXT,                         -- subpasta de origem (01_entrada, 02_prestado...)
+          tipo TEXT DEFAULT 'nota',         -- nota | cancelamento
+          arquivo TEXT NOT NULL,            -- nome do arquivo (identidade)
+          chave TEXT,                       -- chave de acesso da nota (ou da nota cancelada)
+          caminho TEXT,                     -- caminho atual no disco
+          competencia TEXT,                 -- AAAA-MM da pasta
+          emissao TEXT,                     -- AAAA-MM-DD lida do XML
+          hash TEXT,                        -- sha256 do XML enviado
+          estado TEXT DEFAULT 'NOVO',       -- NOVO|ENVIANDO|ENVIADO|CONFIRMADO|JA_EXISTENTE|
+                                            -- RECUSADO|PAUSADO|REPETIR|INCERTO|FORA_PERIODO
+          tentativas INTEGER DEFAULT 0,
+          consultas INTEGER DEFAULT 0,
+          lote_id TEXT,
+          codigo TEXT,                      -- codigo de retorno da Dominio
+          mensagem TEXT,
+          proximo TEXT,                     -- quando tentar/consultar de novo
+          enviado_em TEXT, criado TEXT, atualizado TEXT,
+          UNIQUE(cnpj, doc, arquivo));
+        CREATE INDEX IF NOT EXISTS idx_dominio_envios_estado ON dominio_envios(estado, proximo);
+        CREATE INDEX IF NOT EXISTS idx_dominio_envios_cnpj ON dominio_envios(cnpj, estado);
+        CREATE INDEX IF NOT EXISTS idx_dominio_envios_chave ON dominio_envios(cnpj, chave);
         ''')
         # migracoes de colunas novas em bancos antigos
         _add_col(c, 'usuarios', 'todas_empresas', 'todas_empresas INTEGER DEFAULT 0')
