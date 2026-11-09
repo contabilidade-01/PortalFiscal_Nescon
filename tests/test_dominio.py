@@ -393,6 +393,7 @@ def test_credenciais_pela_tela(monkeypatch):
     assert 'SEGREDO-1' not in (models.get_param('dominio_client_secret') or '')
     cfg = api.config()
     assert (cfg['client_id'], cfg['client_secret'], cfg['origem_credenciais']) == ('CID-1', 'SEGREDO-1', 'tela')
+    models.set_param('dominio_modo', 'direto')
     html = cli.get('/dominio').get_data(as_text=True)
     assert 'SEGREDO-1' not in html and 'configurados (tela)' in html
     monkeypatch.setenv('DOMINIO_CLIENT_ID', 'ENV'); monkeypatch.setenv('DOMINIO_CLIENT_SECRET', 'ENVSEC')

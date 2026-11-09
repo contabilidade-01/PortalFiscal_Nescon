@@ -406,6 +406,11 @@ def init_db():
         # Dominio: chave de envio obtida em activation/enable (cifrada)
         _add_col(c, 'dominio_empresa', 'chave_envio_cifrada', "chave_envio_cifrada TEXT DEFAULT ''")
         _add_col(c, 'dominio_empresa', 'chave_info', 'chave_info TEXT')  # retorno de activation/info
+        # Dominio via gateway do fornecedor (mesma fila; operacao idempotente por request_id)
+        _add_col(c, 'dominio_envios', 'idem_key', 'idem_key TEXT')
+        _add_col(c, 'dominio_envios', 'iniciado', 'iniciado INTEGER DEFAULT 0')
+        _add_col(c, 'dominio_envios', 'protocolo', 'protocolo TEXT')
+        _add_col(c, 'dominio_envios', 'ack_pendente', 'ack_pendente INTEGER DEFAULT 0')
         # admin inicial (senha vem de env em producao; local usa admin/admin)
         if not c.execute('SELECT 1 FROM usuarios LIMIT 1').fetchone():
             senha_inicial = os.environ.get('ADMIN_SENHA_INICIAL', 'admin')

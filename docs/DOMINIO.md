@@ -4,6 +4,31 @@ Estado em 2026-11-09: **fila, tela e cliente da API prontos e alinhados ao guia 
 Faltam o `client_id`/`client_secret` do integrador (pedidos a `api.dominio@thomsonreuters.com`)
 e as respostas às dúvidas abaixo.
 
+## Dois modos de conexão (Admin → Envio Domínio → Conexão com a Domínio)
+| Modo | O que precisa | Quem fala com a Domínio |
+|---|---|---|
+| **Gateway do sistema** (padrão) | Código de ativação do fornecedor + chave Domínio de cada empresa | O gateway do fornecedor (`yzmp6lmumi.execute-api.sa-east-1.amazonaws.com`), igual ao EXE CentralNFSe |
+| **API direta** | Client ID/Secret da Domínio + chave de cada empresa | O próprio Portal Fiscal (`api.onvio.com.br`) |
+
+### Gateway (engines/dominio_gateway.py) — rotas, iguais às do EXE
+| Rota | Uso |
+|---|---|
+| `POST /api/v1/ativacoes` | `{ticket, installation_id}` → `credential`, `expires_at` (credencial cifrada com `DOMINIO_KEY`) |
+| `GET /health` | Testar conexão |
+| `POST /api/v1/envios` | XML (`application/xml`) + `X-Company-Cnpj`, `X-Company-Key`, `X-Idempotency-Key` |
+| `GET /api/v1/envios/{request_id}` | Operação já iniciada: consulta antes de reenviar |
+| `POST /api/v1/envios/status` | Resultados em lote (a cada 30 s) |
+| `POST /api/v1/envios/acompanhamento` | Gateway acompanha sozinho o que está AGUARDANDO_DOMINIO (2 por ciclo) |
+| `POST /api/v1/envios/confirmacoes` | Confirma ao gateway os resultados finais já gravados |
+| `POST /api/v1/envios/{request_id}/retentativas` | Libera o reenvio manual |
+
+- `request_id = sha256(installation_id|cnpj|sha256(xml))`: a mesma operação nunca é duplicada.
+- Estados: RECEBIDO/AGUARDANDO_DOMINIO → ENVIADO; CONFIRMADO; JA_EXISTENTE; REJEITADO → RECUSADO;
+  INDETERMINADO → INCERTO; FALHA_TRANSITORIA → REPETIR (ou PAUSADO se o gateway não permitir).
+- Ritmo do EXE: 1 XML a cada ~4 s; resultados a cada 30 s.
+- **Atenção:** ativar o portal com o código cria uma instalação nova no gateway. Se o código for de
+  uso único, a instalação do EXE pode deixar de valer — confirmar com o fornecedor.
+
 ## Como funciona
 ```
 XML/<cnpj>/<AAAA-MM>/<doc>/<sub>/  →  varrer()  →  tabela dominio_envios  →  processar()  →  API
