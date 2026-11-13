@@ -30,7 +30,7 @@
   <p class="desc" style="margin-top:-6px">Os ambientes de captura de cada cliente são marcados em {% if tem_perm('parametros_captura') %}<a href="{{ url_for('parametros_captura') }}">Parâmetros de captura</a>{% else %}Parâmetros de captura (admin){% endif %} ou no Editar. Aqui: emissor e ativo (o tick de ativo salva na hora).</p>
   <div class="tbl-wrap">
   <table style="min-width:900px">
-    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Ambientes</th><th>Carteira · Emissor · Ativo</th><th>Ações</th></tr></thead>
+    <thead><tr><th>Empresa</th><th>CNPJ</th><th>Cert</th><th>Ambientes</th>{% if papel_atual == 'admin' %}<th>Usuários</th>{% endif %}<th>Carteira · Emissor · Ativo</th><th>Ações</th></tr></thead>
     <tbody>
     {% for e in empresas %}
     <tr>
@@ -46,6 +46,7 @@
         {% if e['puxa_nfce'] %}<span class="tag" style="color:#15803d">NFC-e</span>{% endif %}
         {% if not (e['puxa_nfe'] or e['puxa_nfse_prestado'] or e['puxa_nfse_tomado'] or e['puxa_nfce']) %}<span class="muted">nenhum</span>{% endif %}
       </div></td>
+      {% if papel_atual == 'admin' %}<td style="max-width:160px">{% for n in usr_emp.get(e['id'], []) %}<span class="tag">{{ n }}</span> {% else %}<span class="muted">—</span>{% endfor %}</td>{% endif %}
       <td>
         <form method="post" action="{{ url_for('cliente_salvar', eid=e['id'], q=q, carteira=carteira) }}" class="rowform">
           {% if papel_atual == 'admin' %}
@@ -67,7 +68,7 @@
         </div>
       </td>
     </tr>
-    {% else %}<tr><td colspan="6" class="muted" style="text-align:center;padding:30px">Nenhuma empresa.</td></tr>
+    {% else %}<tr><td colspan="{{ 7 if papel_atual == 'admin' else 6 }}" class="muted" style="text-align:center;padding:30px">Nenhuma empresa.</td></tr>
     {% endfor %}
     </tbody>
   </table>
@@ -83,6 +84,23 @@
       <button class="btn sm" style="background:var(--errbg);color:var(--err)">Conferir lista</button>
     </div>
   </form>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Atribuir clientes a usuário (em lote)</h2>
+  <p class="desc">Cole os CNPJs e escolha o operador que vai atender esses clientes. Ele passa a vê-los mesmo fora da carteira dele. Um cliente pode ter mais de um usuário; para cada cliente também dá para marcar no Editar.</p>
+  {% if usuarios %}
+  <form method="post" action="{{ url_for('clientes_atribuir') }}">
+    <textarea name="cnpjs" rows="5" style="width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:11px;background:var(--surface2);color:var(--txt);font-family:ui-monospace,Consolas,monospace;font-size:13px" placeholder="11.222.333/0001-81&#10;44555666000199"></textarea>
+    <div class="rowform" style="margin-top:10px">
+      <select name="usuario" class="mini">{% for u in usuarios %}<option value="{{ u['id'] }}">{{ u['nome'] or u['login'] }}</option>{% endfor %}</select>
+      <select name="acao" class="mini"><option value="atribuir">Atribuir</option><option value="remover">Retirar</option></select>
+      <button class="btn btn-primary sm">Aplicar</button>
+    </div>
+  </form>
+  {% else %}
+  <p class="muted" style="font-size:13px">Nenhum operador restrito cadastrado. Crie em <a href="{{ url_for('usuarios') }}">Usuários</a>.</p>
+  {% endif %}
 </div>
 
 <div class="card">

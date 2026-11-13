@@ -639,7 +639,41 @@ def clientes():
     if cart in models.CARTEIRAS:
         emp = [e for e in emp if e['carteira'] == cart]
     return render_template('clientes.html', empresas=emp, q=q, carteira=cart,
-                           carteiras=models.CARTEIRAS, tot_cart=tot_cart)
+                           carteiras=models.CARTEIRAS, tot_cart=tot_cart,
+                           usr_emp=models.usuarios_por_empresa() if session.get('papel') == 'admin' else {},
+                           usuarios=models.usuarios_atribuiveis() if session.get('papel') == 'admin' else [])
+
+def _cnpjs_colados(texto):
+    out = []
+    for tok in re.findall(r'[\d./-]{14,18}', texto or ''):
+        d = re.sub(r'\D', '', tok)
+        if len(d) == 14 and d not in out:
+            out.append(d)
+    return out
+
+@app.route('/clientes/atribuir', methods=['POST'])
+@admin_required
+def clientes_atribuir():
+    """Atribui (ou retira) em lote clientes a um usuario: CNPJs colados."""
+    try:
+        uid = int(request.form.get('usuario') or 0)
+    except ValueError:
+        uid = 0
+    usr = {u['id']: u for u in models.usuarios_atribuiveis()}.get(uid)
+    if not usr:
+        flash('Escolha um usuário operador (admin e "todas as empresas" já veem tudo).', 'erro')
+        return redirect(url_for('clientes'))
+    cnpjs = _cnpjs_colados(request.form.get('cnpjs'))
+    with models.con() as c:
+        ids = [r['id'] for r in (c.execute('SELECT id FROM empresas WHERE cnpj=?', (d,)).fetchone()
+                                 for d in cnpjs) if r]
+    remover = request.form.get('acao') == 'remover'
+    n = models.atribuir_empresas(uid, ids, remover=remover)
+    nao = len(cnpjs) - len(ids)
+    quem = usr['nome'] or usr['login']
+    flash('%d cliente(s) %s %s.%s' % (n, 'retirado(s) de' if remover else 'atribuído(s) a', quem,
+          (' %d CNPJ(s) não estão na base.' % nao) if nao else ''), 'ok' if n else 'erro')
+    return redirect(url_for('clientes'))
 
 @app.route('/clientes/carteira', methods=['POST'])
 @admin_required
@@ -751,9 +785,12 @@ def cliente_novo():
                        _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')),
                        'manual', datetime.now().isoformat(timespec='seconds'),
                        models.carteira_valida(f.get('carteira'))))
+            novo_id = c.execute('SELECT id FROM empresas WHERE cnpj=?', (cnpj,)).fetchone()['id']
             models.sync_puxa_nfse(c)
+        models.salvar_usuarios_da_empresa(novo_id, f.getlist('usuarios'))
         flash('Cliente cadastrado.', 'ok'); return redirect(url_for('clientes'))
-    return render_template('cliente_form.html', e=None, carteiras=models.CARTEIRAS)
+    return render_template('cliente_form.html', e=None, carteiras=models.CARTEIRAS,
+                           usuarios=models.usuarios_atribuiveis(), usr_sel=set())
 
 @app.route('/clientes/<int:eid>/editar', methods=['GET', 'POST'])
 @admin_required
@@ -778,8 +815,10 @@ def cliente_editar(eid):
                        _anexo(f.get('simples_anexo')), _rbt12(f.get('simples_rbt12')),
                        models.carteira_valida(f.get('carteira')), eid))
             models.sync_puxa_nfse(c)
+        models.salvar_usuarios_da_empresa(eid, f.getlist('usuarios'))
         flash('Cliente atualizado.', 'ok'); return redirect(url_for('clientes'))
-    return render_template('cliente_form.html', e=e, carteiras=models.CARTEIRAS)
+    return render_template('cliente_form.html', e=e, carteiras=models.CARTEIRAS,
+                           usuarios=models.usuarios_atribuiveis(), usr_sel=models.usuarios_da_empresa(eid))
 
 @app.route('/clientes/<int:eid>/excluir', methods=['GET', 'POST'])
 @perm_required('excluir_cliente')

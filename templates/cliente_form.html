@@ -62,6 +62,17 @@
         <label class="chk"><input type="checkbox" name="ativo" {{ 'checked' if (e['ativo'] if e else 1) }}> Cliente ativo</label>
       </div>
 
+      <label style="margin-top:18px">Usuários responsáveis <span class="muted" style="font-weight:500">— operadores que passam a ver e atender este cliente (somam com a carteira; admin e "todas as empresas" já veem tudo)</span></label>
+      {% if usuarios %}
+      <div class="chkrow" style="margin-top:6px">
+        {% for u in usuarios %}
+        <label class="chk"><input type="checkbox" name="usuarios" value="{{ u['id'] }}" {{ 'checked' if u['id'] in usr_sel }}> {{ u['nome'] or u['login'] }}</label>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted" style="margin:6px 0 0;font-size:13px">Nenhum operador restrito cadastrado. Crie em <a href="{{ url_for('usuarios') }}">Usuários</a>.</p>
+      {% endif %}
+
       {% if e %}
       <div class="card" style="background:var(--surface2);margin-top:18px;border:1px solid var(--line)">
         <h3 style="margin:0 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--sub)">
