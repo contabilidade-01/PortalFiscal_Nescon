@@ -479,6 +479,56 @@ def salvar_carteiras(user_id, carteiras):
         for k in validas:
             c.execute('INSERT OR IGNORE INTO usuario_carteiras(user_id,carteira) VALUES(?,?)', (user_id, k))
 
+# ---------- Atribuicao de clientes a usuarios (pelo cadastro do cliente) ----------
+# Mesma tabela usuario_empresas da tela de Usuarios: atribuir aqui = marcar a empresa
+# no usuario. So entram operadores restritos (admin e "todas as empresas" ja veem tudo).
+def usuarios_atribuiveis():
+    """Operadores ativos que dependem de atribuicao para ver a empresa."""
+    with con() as c:
+        return c.execute("SELECT id, login, nome FROM usuarios WHERE papel!='admin' "
+                         "AND COALESCE(todas_empresas,0)=0 AND ativo=1 ORDER BY nome, login").fetchall()
+
+def usuarios_da_empresa(empresa_id):
+    with con() as c:
+        return {r['user_id'] for r in
+                c.execute('SELECT user_id FROM usuario_empresas WHERE empresa_id=?', (empresa_id,)).fetchall()}
+
+def usuarios_por_empresa():
+    """{empresa_id: [nome, ...]} das atribuicoes diretas (para a lista de clientes)."""
+    out = {}
+    with con() as c:
+        for r in c.execute('SELECT ue.empresa_id, COALESCE(NULLIF(u.nome,\'\'), u.login) nome '
+                           'FROM usuario_empresas ue JOIN usuarios u ON u.id=ue.user_id '
+                           'ORDER BY nome').fetchall():
+            out.setdefault(r['empresa_id'], []).append(r['nome'])
+    return out
+
+def salvar_usuarios_da_empresa(empresa_id, user_ids):
+    """Substitui os operadores atribuidos ao cliente (so entre os atribuiveis)."""
+    validos = {u['id'] for u in usuarios_atribuiveis()}
+    sel = {int(x) for x in user_ids if str(x).isdigit()} & validos
+    with con() as c:
+        if validos:
+            c.execute('DELETE FROM usuario_empresas WHERE empresa_id=? AND user_id IN (%s)'
+                      % ','.join('?' * len(validos)), [empresa_id] + list(validos))
+        for uid in sel:
+            c.execute('INSERT OR IGNORE INTO usuario_empresas(user_id,empresa_id) VALUES(?,?)',
+                      (uid, empresa_id))
+    return sel
+
+def atribuir_empresas(user_id, empresa_ids, remover=False):
+    """Atribui (ou retira) varias empresas de um operador. Retorna quantas mudaram."""
+    n = 0
+    with con() as c:
+        for eid in empresa_ids:
+            if remover:
+                n += c.execute('DELETE FROM usuario_empresas WHERE user_id=? AND empresa_id=?',
+                               (user_id, eid)).rowcount
+            else:
+                n += c.execute('INSERT OR IGNORE INTO usuario_empresas(user_id,empresa_id) VALUES(?,?)',
+                               (user_id, eid)).rowcount
+    return n
+
 def pode_ver_empresa(user, empresa_id):
     ids = empresas_visiveis_ids(user)
     return ids is None or empresa_id in ids
