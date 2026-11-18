@@ -66,17 +66,26 @@ def _motivo_erro(r):
                                      e.get('Descricao') or e.get('descricao') or ''))
     return ' | '.join(p.strip() for p in partes if p and p.strip())[:200] or str(j)[:200]
 
+def _doc_do_bloco(xml, tag):
+    """CNPJ ou CPF de dentro do bloco <tag>...</tag> (sem sair dele). Antes a busca
+    '<emit>.*?<CNPJ>' atravessava o bloco: prestador com CPF (pessoa fisica) pegava o
+    CNPJ do TOMADOR e a nota tomada caia em 02_prestado (sumia de NFS-e Tomados)."""
+    bloco = re.search(r'<%s\b[^>]*>(.*?)</%s>' % (tag, tag), xml, re.S)
+    if not bloco:
+        return None
+    doc = re.search(r'<(?:CNPJ|CPF)>([^<]+)</', bloco.group(1))
+    return re.sub(r'[^0-9A-Za-z]', '', doc.group(1)).upper() if doc else None
+
 def sub_nfse(xml, cnpj):
     """Classifica a NFSe para a empresa: 02_prestado (saida, empresa=prestador)
     ou 01_tomado (entrada, empresa=tomador)."""
-    emit = re.search(r'<emit>.*?<CNPJ>(\d+)', xml, re.S) or re.search(r'<prest>.*?<CNPJ>(\d+)', xml, re.S)
-    prest = emit.group(1) if emit else None
+    cnpj = re.sub(r'[^0-9A-Za-z]', '', cnpj or '').upper()
+    prest = _doc_do_bloco(xml, 'emit') or _doc_do_bloco(xml, 'prest')
     if prest == cnpj:
         return '02_prestado'
-    toma = re.search(r'<toma>.*?<(?:CNPJ|CPF)>(\d+)', xml, re.S)
-    if toma and toma.group(1) == cnpj:
+    if _doc_do_bloco(xml, 'toma') == cnpj:
         return '01_tomado'
-    return '02_prestado' if prest == cnpj else '01_tomado'
+    return '01_tomado'
 
 def sub_doc(xml, cnpj, tipo=''):
     """Pasta do documento: eventos (cancelamento etc.) nao sao nota emitida nem tomada."""
@@ -96,6 +105,42 @@ def _salvar(cnpj, xml, nsu, tipo=''):
     pasta = os.path.join(SAIDA, cnpj, comp, 'NFSe', sub); os.makedirs(pasta, exist_ok=True)
     open(os.path.join(pasta, '%s.xml' % nome), 'w', encoding='utf-8').write(xml)
     return sub
+
+def reclassificar_disco(base=None):
+    """Corrige XML ja salvos em 02_prestado que, pela regra atual, sao TOMADOS
+    (prestador pessoa fisica). Move para 01_tomado da mesma competencia; se ja existir
+    la, so remove a copia errada. Idempotente. Retorna quantos moveu."""
+    base = base or SAIDA
+    movidos = 0
+    if not os.path.isdir(base):
+        return 0
+    for cnpj in os.listdir(base):
+        dcnpj = os.path.join(base, cnpj)
+        if not os.path.isdir(dcnpj):
+            continue
+        for comp in os.listdir(dcnpj):
+            origem = os.path.join(dcnpj, comp, 'NFSe', '02_prestado')
+            if not os.path.isdir(origem):
+                continue
+            for arq in os.listdir(origem):
+                f = os.path.join(origem, arq)
+                if not arq.lower().endswith('.xml') or not os.path.isfile(f):
+                    continue
+                try:
+                    xml = open(f, encoding='utf-8', errors='ignore').read()
+                except OSError:
+                    continue
+                if sub_doc(xml, cnpj) != '01_tomado':
+                    continue
+                destino = os.path.join(dcnpj, comp, 'NFSe', '01_tomado')
+                os.makedirs(destino, exist_ok=True)
+                alvo = os.path.join(destino, arq)
+                if os.path.exists(alvo):
+                    os.remove(f)
+                else:
+                    os.replace(f, alvo)
+                movidos += 1
+    return movidos
 
 def _detalhe(ult, por_sub, erro=''):
     """Detalhe da execucao: o total da coluna Docs mistura tudo o que veio da fila do ADN;

@@ -326,6 +326,14 @@ def iniciar_worker():
         except Exception: pass
         try: cancelar_saidas_desligadas()
         except Exception: pass
+        # Uma vez: tira de 'emitidas' as NFS-e tomadas de prestador pessoa fisica
+        # (classificacao antiga atravessava o bloco <emit>).
+        try:
+            if models.get_param('nfse_reclassif_v1') != '1':
+                nfse.reclassificar_disco()
+                models.set_param('nfse_reclassif_v1', '1')
+        except Exception:
+            pass
         threading.Thread(target=_loop, daemon=True).start()
         if os.environ.get('FISCAL_CRON', '0') == '1':
             threading.Thread(target=_loop_agendado, daemon=True, name='fiscal-cron').start()
