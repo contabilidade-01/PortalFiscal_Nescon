@@ -74,3 +74,34 @@ def test_conferencia_nfse_abrasf_usa_valor_servicos():
 def test_conferencia_nfse_so_liquido_cai_no_fallback():
     from engines import conferencia
     assert conferencia.parse_nfse('<NFSe><vLiq>50.00</vLiq></NFSe>')['valor'] == 50.0
+
+
+def test_tomada_de_prestador_pessoa_fisica_nao_vira_emitida():
+    # Prestador com CPF: a busca antiga atravessava <emit> e pegava o CNPJ do tomador.
+    cn = '11222333000181'
+    xml = ('<NFSe><infNFSe><emit><CPF>12345678901</CPF></emit><DPS><infDPS>'
+           '<prest><CPF>12345678901</CPF></prest><toma><CNPJ>%s</CNPJ></toma>'
+           '</infDPS></DPS></infNFSe></NFSe>' % cn)
+    assert nfse.sub_doc(xml, cn, 'NFSE') == '01_tomado'
+
+
+def test_emitida_com_tomador_pessoa_fisica():
+    cn = '11222333000181'
+    xml = ('<NFSe><infNFSe><emit><CNPJ>%s</CNPJ></emit><DPS><infDPS>'
+           '<prest><CNPJ>%s</CNPJ></prest><toma><CPF>12345678901</CPF></toma>'
+           '</infDPS></DPS></infNFSe></NFSe>' % (cn, cn))
+    assert nfse.sub_doc(xml, cn, 'NFSE') == '02_prestado'
+
+
+def test_reclassificar_disco_move_tomada_errada(tmp_path):
+    cn = '11222333000181'
+    errado = tmp_path / cn / '2026-10' / 'NFSe' / '02_prestado'
+    errado.mkdir(parents=True)
+    (errado / 'A.xml').write_text('<NFSe><emit><CPF>12345678901</CPF></emit>'
+                                  '<toma><CNPJ>%s</CNPJ></toma></NFSe>' % cn, encoding='utf-8')
+    (errado / 'B.xml').write_text('<NFSe><emit><CNPJ>%s</CNPJ></emit>'
+                                  '<toma><CPF>12345678901</CPF></toma></NFSe>' % cn, encoding='utf-8')
+    assert nfse.reclassificar_disco(str(tmp_path)) == 1
+    assert (tmp_path / cn / '2026-10' / 'NFSe' / '01_tomado' / 'A.xml').exists()
+    assert (errado / 'B.xml').exists() and not (errado / 'A.xml').exists()
+    assert nfse.reclassificar_disco(str(tmp_path)) == 0
