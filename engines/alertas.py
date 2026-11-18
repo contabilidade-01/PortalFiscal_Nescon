@@ -51,7 +51,8 @@ def _liberar(chaves):
 def _enviar(chaves, texto):
     """Reserva as chaves e envia. Retorna True se disparou (ou agendou) o envio."""
     from engines import uazapi, guard
-    if not guard.ALERTA_WHATSAPP or not uazapi.configurado():
+    destinos = guard.destinatarios_alerta()
+    if not destinos or not uazapi.configurado():
         log.info('alerta nao enviado (uazapi/numero nao configurado): %s', texto[:120])
         return False
     novas = [k for k in chaves if _reservar(k, texto)]
@@ -59,11 +60,18 @@ def _enviar(chaves, texto):
         return False
 
     def _job():
-        try:
-            uazapi.enviar_texto(guard.ALERTA_WHATSAPP, texto)
-            log.info('alerta enviado (%d chave(s))', len(novas))
-        except Exception:
-            log.warning('falha ao enviar alerta; libera para tentar de novo', exc_info=True)
+        ok = 0
+        for numero in destinos:
+            try:
+                uazapi.enviar_texto(numero, texto)
+                ok += 1
+            except Exception:
+                log.warning('falha ao enviar alerta para %s', numero, exc_info=True)
+        if ok:
+            log.info('alerta enviado (%d chave(s)) para %d/%d numero(s)',
+                     len(novas), ok, len(destinos))
+        else:
+            # ninguem recebeu: libera para tentar de novo na proxima rodada
             _liberar(novas)
 
     if ASSINCRONO:

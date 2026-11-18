@@ -126,3 +126,20 @@ def test_nfce_so_sp_no_boot():
         v = dict(c.execute('SELECT nome, puxa_nfce FROM empresas').fetchall())
     assert v == {'LOJA BA': 0, 'LOJA SP': 1, 'SEM UF': 1}
     assert models.nfce_permitida('sp') and models.nfce_permitida(None) and not models.nfce_permitida('BA')
+
+
+def test_destinatarios_varios_numeros(monkeypatch):
+    monkeypatch.setattr(guard, 'ALERTA_WHATSAPP', '11984630568, (11) 90000-0001;11984630568')
+    assert guard.destinatarios_alerta() == ['11984630568', '11900000001']
+    monkeypatch.setattr(guard, 'ALERTA_WHATSAPP', '')
+    assert guard.destinatarios_alerta() == []
+
+
+def test_alerta_vai_para_todos_os_numeros(monkeypatch):
+    _db()
+    env = _captura(monkeypatch)
+    monkeypatch.setattr(guard, 'ALERTA_WHATSAPP', '11984630568,11900000001')
+    _ins('11111111000111', 'VENCIDA', (HOJE - timedelta(days=5)).isoformat())
+    alertas.verificar_certificados(HOJE)
+    assert [n for n, _t in env] == ['11984630568', '11900000001']
+    assert env[0][1] == env[1][1]

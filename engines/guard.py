@@ -5,7 +5,7 @@ Toda consulta passa por pode() / registrar_ok() / registrar_bloqueio().
 Os motores nao decidem cooldown, circuito ou cadencia por conta propria.
 Desligar: SEFAZ_GUARD_ATIVO=0 (cai no cooldown legado das colunas).
 """
-import os, json, logging, random, time, threading
+import os, re, json, logging, random, time, threading
 from datetime import datetime, timedelta
 import models
 from engines.pausa import (
@@ -23,7 +23,19 @@ CIRCUITO_LIMIAR = int(os.environ.get('SEFAZ_CIRCUITO_LIMIAR', _AB.get('circuito_
 GUARD_ATIVO = os.environ.get('SEFAZ_GUARD_ATIVO', '1') != '0'
 # WhatsApp de alerta (Melhoria F): so dispara quando o circuito ABRE. Numero
 # configuravel por env; default e o responsavel do escritorio.
+# Aceita varios numeros separados por virgula (ex.: '11984630568,11900000000'):
+# todos recebem os mesmos alertas (circuito, falhas de captura, certificado).
 ALERTA_WHATSAPP = os.environ.get('SEFAZ_ALERTA_WHATSAPP', '11984630568').strip()
+
+
+def destinatarios_alerta():
+    """Lista de numeros (so digitos) que recebem os alertas, sem duplicados."""
+    vistos = []
+    for parte in re.split(r'[,;]', ALERTA_WHATSAPP or ''):
+        num = re.sub(r'\D', '', parte)
+        if num and num not in vistos:
+            vistos.append(num)
+    return vistos
 
 # 656/429 incrementam o disjuntor; 108/109 so cooldown.
 INCREMENTA_CIRCUITO = frozenset(('656', '429'))
@@ -242,7 +254,8 @@ _SERVICO_ROTULO = {'distNSU': 'NF-e (distribuição)', 'ciencia': 'Ciência 2102
 def _alertar_circuito(servico, cnpj, nome, seguidos):
     """Avisa no WhatsApp que o disjuntor abriu (exige rearme humano). Nunca bloqueia
     o worker: roda numa thread e engole qualquer falha (uazapi fora do ar, token, etc.)."""
-    if not ALERTA_WHATSAPP:
+    destinos = destinatarios_alerta()
+    if not destinos:
         return
 
     def _job():
@@ -260,10 +273,16 @@ def _alertar_circuito(servico, cnpj, nome, seguidos):
                 'permanente na SEFAZ. É preciso *rearme manual* na tela "Saúde SEFAZ".'
             ) % (_SERVICO_ROTULO.get(servico, servico), nome or '?', cnpj or '?',
                  seguidos, CIRCUITO_LIMIAR)
-            uazapi.enviar_texto(ALERTA_WHATSAPP, texto)
-            log.info('alerta de circuito enviado para %s', ALERTA_WHATSAPP)
         except Exception:
-            log.warning('falha ao enviar alerta WhatsApp de circuito', exc_info=True)
+            log.warning('falha ao montar alerta WhatsApp de circuito', exc_info=True)
+            return
+        for numero in destinos:
+            try:
+                uazapi.enviar_texto(numero, texto)
+                log.info('alerta de circuito enviado para %s', numero)
+            except Exception:
+                log.warning('falha ao enviar alerta WhatsApp de circuito para %s', numero,
+                            exc_info=True)
 
     threading.Thread(target=_job, daemon=True).start()
 
