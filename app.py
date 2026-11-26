@@ -263,6 +263,7 @@ def esqueci_senha():
                 url = '%s%s?token=%s' % (base, url_for('redefinir_senha'), token)
                 mailer.send_password_reset_email(u['email'].strip(), url)
             except Exception:
+                app.logger.exception('Falha ao enviar e-mail de redefinicao de senha')
                 flash('Não foi possível enviar o e-mail agora. Tente mais tarde ou fale com o admin.', 'erro')
                 return redirect(url_for('esqueci_senha'))
         flash(_MSG_FORGOT_OK, 'ok')
